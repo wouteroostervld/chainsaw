@@ -1,0 +1,106 @@
+name: Nightly Release
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+  # Scheduled nightly at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+  # Trigger on version tags
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Release Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Build binaries
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          # Build both binaries
+          go build -ldflags="-s -w" -o chainsaw-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/chainsaw
+
+      - name: Compress binaries
+        run: |
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip chainsaw-${{ matrix.goos }}-${{ matrix.goarch }}.zip chainsaw-${{ matrix.goos }}-${{ matrix.goarch }}.exe
+          else
+            gzip -c chainsaw-${{ matrix.goos }}-${{ matrix.goarch }} > chainsaw-${{ matrix.goos }}-${{ matrix.goarch }}.gz
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chainsaw-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            *.gz
+            *.zip
+          retention-days: 14
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release name
+        id: release_name
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          else
+            echo "name=nightly-$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ steps.release_name.outputs.name }}
+          tag_name: ${{ steps.release_name.outputs.name }}
+          prerelease: ${{ steps.release_name.outputs.prerelease }}
+          files: artifacts/**/*
+          body: |
+            ## Chainsaw Build - ${{ steps.release_name.outputs.name }}
+            
+            Automated build containing compressed binaries for multiple platforms.
+            
+            ### Platforms
+            - Linux (amd64, arm64)
+            - macOS (amd64, arm64)
+            - Windows (amd64)
+            
+            ### Installation
+            1. Download the `.gz` files for your platform (or `.zip` for Windows)
+            2. Extract: `gunzip chainsaw*.gz` (or `unzip` for Windows)
+            3. Make executable: `chmod +x chainsaw chainsawd` (Unix-like systems)
+            4. Move to PATH: `mv chainsaw chainsawd /usr/local/bin/` (or add to your PATH)
+            
+            Built from commit: ${{ github.sha }}

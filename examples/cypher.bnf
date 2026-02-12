@@ -1,0 +1,225 @@
+//The BN Form of the Cypher DSL for graph database querying
+//A work in progress
+//Athanasios Anastasiou 24/07/2013
+
+//Mathematical operators
+math_op ::= "+"|"-"|"*"|"/"|"%"
+
+//Comparison operators
+comp_op ::= "="|"<>"|"<"|">"|"<="|">="
+
+//Boolean operators
+bool_op ::= "AND"|"'OR"|"NOT"
+
+//Property operators
+//NOTE: Mixing the two in the same comparison will lead to unpredictable results.
+prop_op ::= "?"|"!"
+
+//Primitive 'types' (or rather value sets) used in expressions
+digit ::=[0-9]
+chars ::=[a-zA-Z_]
+sign ::= [-]?
+
+integer_val ::= sign digit+
+double_val ::= sign digit+ ('.' digit+)?
+
+numeric_val ::= (integer|double)
+string_val ::= (("'" chars+ digit* "'")|('"' chars+ digit* '"'))
+boolean_val ::= ("true"|"TRUE"|"false"|"FALSE")
+any_val ::= (numeric_val | string_val | boolean_val)
+
+//--EXPRESSIONS--------------
+//--COMPARISON EXPRESSION-------
+// NOTE: With the following definition of a comparison expression, these can be nested to any level. Howver, in Cypher this is not always true. For example:
+//      start a=node(*) return (5>6)<2 will fail but start a=node(*) return (5>6) will pass
+comp_operand ::= (identifier|any_val| "(" comp_expres ")" )
+comp_expres ::= comp_operand (comp_op comp_operand)+
+
+//--LOGIC EXPRESSIONS
+//NOTE: "NOT" is a unary operator so it probably needs to be handled slightly differently (it would appear as a separate branch or optionally at the beginning of other expressions)
+//NOTE: The result of a logic expression is of boolean type
+logic_operand ::= (boolean_val|identifier| "(" logic_expression ")" | comp_expres)
+logic_expression ::= logic_operand (bool_op logic_operand)+
+
+//--NUMERIC EXPRESSIONS
+numeric_operand ::= (numeric_val|identifier|math_fun| "(" numeric_expression ")")
+numeric_expression ::= numeric_operand (math_op numeric_operand)+
+
+//--STRING EXPRESSIONS---
+string_operand ::= (string_val|identifier|str_fun| "(" string_expression ")")
+string_expression::= string_operand ("+" string_operand)+
+
+//--ANY EXPRESSION----
+//NOTE: Bit of a feature creep, but let's keep this one handy too
+any_operand ::= (any_val|identifier|"(" any_expression ")"| (str_fun|math_fun))
+any_expression::= any_operand ((math_op|comp_op|bool_op) any_operand)+
+
+
+//A dictionary (or map) is used in defining properties
+//TODO: VALUES CAN ALSO BE THE RESULT OF EXPRESSIONS!!!
+key_value_pair ::= identifier ":" any_val
+dictionary ::= "{" key_value_pair (("," key_value_pair)+)? "}"
+
+//Collection
+//TODO: Double check that you can have a mixed_type collection (i doubt it)
+collection ::= "[" any_val (("," any_val)+)? "]"
+
+
+//Check the structure of the identifier, especially the "something with fancy characters" bit from:
+//http://docs.neo4j.org/chunked/milestone/cypher-expressions.html
+identifier ::= chars+ digit*
+//A property identifier can also be nullable
+//TODO: While a property identifier can be nullable, this is not allowed in all places.must correct
+property_identifier ::= identifier '.' identifier prop_op?
+
+//General "objects" like nodes and relation expressions
+//A node can be created through an identifier or identifier with properties or just properties
+node_expression ::= identifier | "(" identifier? dictionary ")"
+node ::= node_expression (("," node_expression)+)? 
+
+//The part that makes up the query
+query ::= create_node | (start match? where? (set|delete) return order_by? skip? limit?)
+
+
+//Now each individual query term is handled separately
+//TODO: Bring the node declarations in this section
+create_node ::= "CREATE" node
+
+//TODO: Identifiers are of course all the same but it would be better if they were flagged as different classes so that it becomes apparent what the identifier...identifies
+//NOTE: The "integer" here should really be something like node_id (but that would be an integer anyway, just for clarity)
+//TODO: literals are case insensitive btw
+//TODO: expression here means expression ::= index_lookup|index_query
+start_from_node_or_relation ::= identifier "=" ("node"|"relationship") ( (":" identifier "(" index_expression ")") | ("(" ("*" | (integer_val (("," integer_val)+)?)) ")")   )
+
+start ::= "START" start_from_node_or_relation+ ("," start_from_node_or_relationship)?
+
+//DELETE 
+//TODO: Check the following, it could result to something like "Start a=node(22) delete a, a.someProperty;" (UPDATE: This actually goes through but returns a warning)
+item_to_delete ::= (identifier | property_identifier)
+delete ::= "DELETE" (item_to_delete (("," item_to_delete)+)?)
+
+//SET
+//TODO: At the shell the set {map} doesn't work, have to double check
+set ::= "SET" property_identifier "=" any_val
+
+//RETURN
+return ::= "RETURN" "DISTINCT"? (identifier| (identifier "AS" column_identifier))
+
+//ORDER BY
+order_by_item ::= property_identifier ( "ASC" | "DESC" )?
+order_by ::= "ORDER BY" order_by_item (("," order_by_item)+)?
+
+//SKIP
+//NOTE: Some arguments can be substitutable parameters
+skip ::= "SKIP" integer_val
+
+//LIMIT
+limit ::= "LIMIT" integer_val
+
+
+//PATTERNS!!!
+//NOTE: Still work in progress, !!!!not all patterns are represented here!!!
+a_node ::= "(" identifier ")"
+a_relation ::= "[" identifier "]"
+no_name_edge ::= ("--" | "-->")
+named_edge ::= (("-" a_relation "-") | ("-" a_relationship "->"))
+a_path ::= a_node (((no_name_edge|named_edge) a_node)+)?
+
+//MATCH
+//TODO: This is really a path_identifier
+match_item ::= (identifier "=")? a_path
+match ::= "MATCH" match_item (("," match_item)+)?
+
+//WHERE
+//TODO: Add parentheses and the possibility of comparing to values that are the result of expressions
+comp_predicate ::= property_identifer comparison_operators any_val
+is_null_predicate ::= identifier "IS NULL"
+//NOTE: regex_expression could be represented in here if required but will not be at the moment
+regex_predicate ::= property_identifier "=~" REGEX_EXPRESSION
+in_clctn_predicate ::= property_identifier "IN" collection
+pred_fun_argument ::= identifier "IN" collection "WHERE" has_function
+fun_predicate ::= ("ALL"|"ANY"|"NONE"|"SINGLE") "(" pred_fun_argument ")"
+    
+predicate ::= comp_predicate|is_null_predicate|regex_predicate|in_clctn_predicate|fun_predicate
+where ::= "WHERE" predicate ((bool_op predicate)+)?
+
+//WITH
+with_item ::= identifier "," expression "AS" identifier
+with ::= with_item (("," with_item)+)?
+
+
+
+
+
+//TODO: Perhaps the following should be put in their own syntax
+//--FUNCTIONS---------------------------------------------------------------------------------------
+//HAS function
+has_function ::= "HAS(" property_identifier ")"
+
+//--STRING FUNCTIONS----
+
+//TODO: The 'expression' class must be defined
+//TODO: There should really be one expression class for each value_type these arguments might need. 
+//      For example, in the following functions, two classes would be needed to express string and 
+//      integer expressions
+
+str_arg ::= "STR(" expression  ")"
+//TODO: The following should also include OR string_constant ::= '"' string_val '"'  ")"
+replace_arg ::= "REPLACE(" expression "," expression "," expression  ")"
+substring_arg ::= "SUBSTRING(" expression "," expression ("," expression)?  ")"
+left_arg ::= "LEFT(" expression "," expression  ")"
+right_arg ::= "RIGHT(" expression "," expression ")"
+ltrim_arg ::= "LTRIM(" expression  ")"
+rtrim_arg ::= "RTRIM(" expression  ")"
+trim_arg ::= "TRIM(" expression  ")"
+lower_arg ::= "LOWER(" expression  ")"
+upper_arg ::= "UPPER(" expression  ")"
+str_fun ::= (str_arg|replace_arg|substring_arg|left_arg|right_arg|ltrim_arg|rtrim_arg|trim_arg|lower_arg|upper_arg)
+
+
+//--MATHEMATICAL FUNCTIONS----
+abs_arg ::="ABS(" numeric_expression ")"
+round_arg ::="ROUND(" numeric_expression ")"
+sqrt_arg ::="SQRT(" numeric_expression ")"
+sign_arg ::="SIGN(" numeric_expression ")"
+math_fun ::= (abs_arg|sqrt_arg|sign_arg)
+
+
+//--SCALAR FUNCTIONS----
+length_arg ::= "LENGTH(" collection ")"
+//TODO: The following should really be relation_identifier
+type_arg ::= "TYPE(" identifier ")"
+coalesce_arg ::= "COALESCE(" property_identifier "," any_val ")"
+head_arg ::= "HEAD(" collection ")"
+last_arg ::= "LAST(" collection ")"
+timestamp_arg ::= "TIMESTAMP()"
+//TODO: In the following it is really node_identifier|relation_identifier
+id_arg ::= "ID(" identifier ")"
+scalar_fun ::= (length_arg|type_arg|coalesce_arg|head_arg|last_arg|timestamp_arg)
+
+//--COLLECTION FUNCTIONS----
+nodes_arg ::= "NODES(" a_path ")"
+relations_arg ::= "RELATIONSHIPS(" a_path ")"
+extract_arg ::= "EXTRACT(" identifier "IN" collection ":" property_identifier ")"
+//TODO: In the following check that you can have multiple predicates
+filter_arg ::= "FILTER(" identifier "IN" collection ":" predicate ((bool_op predicate)+)? ")"
+tail_arg ::= "TAIL(" collection ")"
+//In the following, the start, end, step are definitely integers
+range_arg ::= "RANGE(" integer_val "," integer_val "," integer_val ")"
+
+//TODO: REDUCE(str = "", n IN coll : str + n.prop) (doh!), FOREACH (n IN coll : SET n.marked = true)
+
+//--AGGREGATION FUNCTIONS----
+count_arg ::= "COUNT(" ("DISTINCT"? ("*" | identifier)) ")"
+sum_arg ::= "SUM(" property_identifier ")"
+avg_arg ::= "AVG(" property_identifier ")"
+max_arg ::= "MAX(" property_identifier ")"
+min_arg ::= "MIN(" property_identifier ")"
+col_arg ::= "COLLECT(" property_identifier ")"
+pcd_arg ::= "PERCENTILE_DISC(" property_identifier "," double_val ")"
+pcc_arg ::= "PERCENTILE_CONT(" property_identifier "," double_val ")"
+
+
+
+
+

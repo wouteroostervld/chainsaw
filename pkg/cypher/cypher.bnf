@@ -1,0 +1,147 @@
+/* Cypher Query Language - Minimal Subset for Graph Queries */
+
+/* Lexical Part */
+
+id         : 'a'-'z' {'a'-'z' | 'A'-'Z' | '0'-'9' | '_'} ;
+upid       : 'A'-'Z' {'a'-'z' | 'A'-'Z' | '0'-'9' | '_'} ;
+int        : '0'-'9' {'0'-'9'} ;
+
+!whitespace : ' ' | '\t' | '\n' | '\r' ;
+!comment    : '/' '/' {.} '\n' ;
+
+/* Syntax Part */
+
+<< import "github.com/wouteroostervld/chainsaw/pkg/cypher/ast" >>
+
+Query
+    : MatchClause ReturnClause GroupByClause OrderByClause LimitClause
+      << ast.NewQueryWithClauses($0, $1, $2, $3, $4) >>
+    | MatchClause ReturnClause GroupByClause OrderByClause
+      << ast.NewQueryWithClauses($0, $1, $2, $3, nil) >>
+    | MatchClause ReturnClause GroupByClause LimitClause
+      << ast.NewQueryWithClauses($0, $1, $2, nil, $3) >>
+    | MatchClause ReturnClause OrderByClause LimitClause
+      << ast.NewQueryWithClauses($0, $1, nil, $2, $3) >>
+    | MatchClause ReturnClause GroupByClause
+      << ast.NewQueryWithClauses($0, $1, $2, nil, nil) >>
+    | MatchClause ReturnClause OrderByClause
+      << ast.NewQueryWithClauses($0, $1, nil, $2, nil) >>
+    | MatchClause ReturnClause LimitClause
+      << ast.NewQueryWithClauses($0, $1, nil, nil, $2) >>
+    | MatchClause ReturnClause
+      << ast.NewQuery($0, $1) >>
+    ;
+
+MatchClause
+    : "MATCH" PathPattern
+      << ast.NewMatchClause($1) >>
+    ;
+
+PathPattern
+    : Node Edge Node
+      << ast.NewPathPattern($0, $1, $2) >>
+    ;
+
+Node
+    : "(" id ":" upid ")"
+      << ast.NewNodeLabeled($1, $3) >>
+    | "(" id ")"
+      << ast.NewNodeVar($1) >>
+    | "(" ")"
+      << ast.NewNodeAnon() >>
+    ;
+
+Edge
+    : "-" "[" ":" id "]" "-" ">"
+      << ast.NewEdgeForward($3) >>
+    | "-" "[" ":" id "*" int "." "." int "]" "-" ">"
+      << ast.NewEdgeMultiHopForward($3, $5, $8) >>
+    | "-" "[" ":" id "*" int "]" "-" ">"
+      << ast.NewEdgeMultiHopForward($3, $5, $5) >>
+    | "-" "[" "*" int "." "." int "]" "-" ">"
+      << ast.NewEdgeMultiHopForward(nil, $3, $6) >>
+    | "-" "[" "*" int "]" "-" ">"
+      << ast.NewEdgeMultiHopForward(nil, $3, $3) >>
+    | "<" "-" "[" ":" id "]" "-"
+      << ast.NewEdgeBackward($4) >>
+    | "<" "-" "[" ":" id "*" int "." "." int "]" "-"
+      << ast.NewEdgeMultiHopBackward($4, $6, $9) >>
+    | "<" "-" "[" ":" id "*" int "]" "-"
+      << ast.NewEdgeMultiHopBackward($4, $6, $6) >>
+    | "<" "-" "[" "*" int "." "." int "]" "-"
+      << ast.NewEdgeMultiHopBackward(nil, $4, $7) >>
+    | "<" "-" "[" "*" int "]" "-"
+      << ast.NewEdgeMultiHopBackward(nil, $4, $4) >>
+    | "-" "[" "]" "-" ">"
+      << ast.NewEdgeAnyForward() >>
+    | "-" "[" "]" "-"
+      << ast.NewEdgeAny() >>
+    ;
+
+ReturnClause
+    : "RETURN" ReturnItems
+      << ast.NewReturnClause($1) >>
+    ;
+
+ReturnItems
+    : ReturnItem
+      << ast.NewReturnItems($0) >>
+    | ReturnItems "," ReturnItem
+      << ast.AppendReturnItem($0, $2) >>
+    ;
+
+ReturnItem
+    : upid "(" id ")" "AS" id
+      << ast.NewReturnAggregateWithAlias($0, $2, $5) >>
+    | upid "(" id ")"
+      << ast.NewReturnAggregate($0, $2) >>
+    | id "." id "AS" id
+      << ast.NewReturnPropWithAlias($0, $2, $4) >>
+    | id "." id
+      << ast.NewReturnProp($0, $2) >>
+    | id
+      << ast.NewReturnVar($0) >>
+    ;
+
+GroupByClause
+    : "GROUP" "BY" GroupByItems
+      << ast.NewGroupByClause($2) >>
+    ;
+
+GroupByItems
+    : GroupByItem
+      << ast.NewGroupByItems($0) >>
+    | GroupByItems "," GroupByItem
+      << ast.AppendGroupByItem($0, $2) >>
+    ;
+
+GroupByItem
+    : id "." id
+      << ast.NewGroupByItem($0, $2) >>
+    ;
+
+OrderByClause
+    : "ORDER" "BY" OrderByItems
+      << ast.NewOrderByClause($2) >>
+    ;
+
+OrderByItems
+    : OrderByItem
+      << ast.NewOrderByItems($0) >>
+    | OrderByItems "," OrderByItem
+      << ast.AppendOrderByItem($0, $2) >>
+    ;
+
+OrderByItem
+    : id "ASC"
+      << ast.NewOrderByItemAsc($0) >>
+    | id "DESC"
+      << ast.NewOrderByItemDesc($0) >>
+    | id
+      << ast.NewOrderByItem($0) >>
+    ;
+
+LimitClause
+    : "LIMIT" int
+      << ast.NewLimitClause($1) >>
+    ;

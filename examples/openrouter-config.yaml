@@ -1,0 +1,40 @@
+# Chainsaw Configuration - OpenRouter.ai Example
+# See: https://github.com/wouteroostervld/chainsaw
+
+version: "2.0"
+active_profile: "openrouter"
+
+profiles:
+  openrouter:
+    # Directories to watch (update these to your project paths)
+    include:
+      - "/path/to/your/project/src"
+    
+    exclude:
+      - "node_modules"
+      - ".git"
+      - "vendor"
+    
+    blacklist:
+      - '/\.git/'
+      - '\.tmp$'
+      - '\.log$'
+    
+    whitelist: []
+    
+    # Use OpenRouter.ai with Llama 3
+    llm_base_url: "https://openrouter.ai/api/v1"
+    llm_api_key: "sk-or-v1-YOUR-API-KEY-HERE"  # Get from https://openrouter.ai/keys
+    
+    # Models from OpenRouter
+    embedding_model: "text-embedding-3-small"  # OpenAI embedding via OpenRouter
+    
+    # Graph extraction with Llama 3
+    graph_driver:
+      model: "meta-llama/llama-3.1-8b-instruct"
+      temperature: 0.1
+      concurrency: 5
+      output_format: "json"
+    
+    chunk_size: 512
+    overlap: 64

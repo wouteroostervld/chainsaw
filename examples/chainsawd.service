@@ -1,0 +1,44 @@
+# Chainsaw Daemon - Systemd User Service Unit
+
+[Unit]
+Description=Chainsaw GraphRAG Indexing Daemon
+Documentation=https://github.com/wouteroostervld/chainsaw
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/chainsaw daemon start
+Restart=on-failure
+RestartSec=5s
+
+# Graceful shutdown - allow time for WAL flush and queue cleanup
+TimeoutStopSec=30s
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Environment
+Environment=HOME=%h
+
+# Resource limits (adjust based on your needs)
+# Limit memory to 2GB
+MemoryMax=2G
+# Limit CPU to 80%
+CPUQuota=80%
+
+# Security hardening
+# NoNewPrivileges prevents privilege escalation
+NoNewPrivileges=true
+# PrivateTmp gives the service a private /tmp
+PrivateTmp=true
+# Restrict filesystem access to home directory only
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.chainsaw
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=chainsawd
+
+[Install]
+WantedBy=default.target

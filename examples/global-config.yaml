@@ -1,0 +1,83 @@
+# Chainsaw Global Configuration
+# Location: ~/.chainsaw/config.yaml
+
+version: "2.1"
+
+# The active profile to use
+active_profile: "coding_heavy"
+
+profiles:
+  # High-accuracy profile for code projects
+  coding_heavy:
+    # --- Directory Indexing Scope ---
+    # Paths to recursively index (daemon will watch these)
+    include:
+      - "~/go/src/github.com/myproject"
+      - "~/projects/work"
+    
+    # Directory patterns to skip (glob patterns)
+    exclude:
+      - "node_modules"
+      - ".git"
+      - "build"
+      - "dist"
+      - "*.egg-info"
+    
+    # --- File-Level Filtering (Regex on absolute paths) ---
+    # Blacklist: Files matching these patterns are REJECTED (applied first)
+    blacklist:
+      - ".*\\.secret$"           # Reject all .secret files
+      - ".*_test\\.go$"          # Reject Go test files
+      - ".*\\.pyc$"              # Reject Python bytecode
+      - ".*/\\..*"               # Reject hidden files
+    
+    # Whitelist: EXCEPTIONS to blacklist (allows through even if blacklisted)
+    whitelist:
+      - ".*important\\.secret$"  # Allow important.secret files
+      - ".*/\\.gitignore$"       # Allow .gitignore files
+    
+    # --- Embedding Settings ---
+    embedding_model: "nomic-embed-text"
+    chunk_size: 512
+    overlap: 64
+    
+    # --- Graph Extraction Settings ---
+    graph_driver:
+      model: "llama3"              # Ollama model for graph extraction
+      temperature: 0.1             # Low temp for deterministic output
+      concurrency: 2               # Parallel graph extractions
+      output_format: "json"        # Parse as JSON
+      
+      # Custom prompt for graph extraction
+      custom_system_prompt: |
+        Analyze the code snippet. Return a JSON object with a list of "edges".
+        Each edge must have: "source", "target", "relation", "weight" (0.0-1.0).
+        Focus on function calls, imports, and class relations.
+        Ignore generic keywords like "if", "else", "return".
+
+  # Fast profile for note-taking
+  notes_fast:
+    include:
+      - "~/Documents/ObsidianVault"
+      - "~/Notes"
+    
+    exclude:
+      - ".obsidian"
+      - ".trash"
+    
+    blacklist:
+      - ".*\\.tmp$"
+      - ".*\\.bak$"
+    
+    whitelist: []
+    
+    embedding_model: "all-minilm"
+    chunk_size: 1024
+    overlap: 128
+    
+    graph_driver:
+      model: "phi3:mini"
+      temperature: 0.2
+      concurrency: 4
+      output_format: "regex"
+      parsing_regex: '(?P<source>.+?)\s->\s(?P<relation>.+?)\s->\s(?P<target>.+)'

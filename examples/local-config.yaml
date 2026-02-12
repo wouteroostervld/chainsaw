@@ -1,0 +1,63 @@
+# Chainsaw Local Project Configuration
+# Location: .config.yaml (in project root or subdirectories)
+#
+# This file allows per-project customization of indexing behavior.
+# Only certain fields can be overridden - this is by design for security.
+#
+# HOW IT WORKS:
+# - Daemon: Discovers this file per-file based on file location
+# - CLI: Discovers this file from current working directory
+# - Merging: Local settings are ADDITIVE (make filtering more restrictive)
+
+# For CLI: Add additional directories to search
+# IMPORTANT: Must be within global include scope for security
+include:
+  - "./vendor"          # Relative to this .config.yaml file
+  - "../shared-lib"     # Can reference parent directories  
+  - "./external-deps"   # Project-specific dependencies
+
+# For Both: Add additional directories to exclude from indexing
+exclude:
+  - "tmp/"              # Temporary files
+  - "*.cache"           # Cache directories
+  - "build/"            # Build artifacts
+  - ".venv/"            # Python virtual environment
+  - "coverage/"         # Test coverage reports
+
+# For Both: Add additional file patterns to reject (regex)
+blacklist:
+  - ".*\\.tmp$"         # Temporary files
+  - ".*\\.log$"         # Log files
+  - ".*debug.*\\.go$"   # Debug-specific code files
+
+# ❌ CANNOT OVERRIDE:
+# - whitelist (global exceptions only)
+# - embedding_model, chunk_size, overlap
+# - graph_driver settings
+# - include (daemon ignores local include)
+
+# EXAMPLES:
+
+# Example 1: Monorepo with external vendor directory
+# include:
+#   - "./packages"
+#   - "./vendor"
+# exclude:
+#   - "*/node_modules"
+#   - "*/dist"
+
+# Example 2: Python project with virtual environment
+# exclude:
+#   - ".venv/"
+#   - "__pycache__"
+#   - "*.pyc"
+# blacklist:
+#   - ".*\\.coverage$"
+
+# Example 3: Go project with generated code
+# exclude:
+#   - "generated/"
+#   - "mocks/"
+# blacklist:
+#   - ".*\\.pb\\.go$"      # Protobuf generated files
+#   - ".*_mock\\.go$"      # Mock files
