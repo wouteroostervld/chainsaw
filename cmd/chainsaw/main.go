@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"fs"
 
 	_ "github.com/asg017/sqlite-vec-go-bindings/cgo" // Load sqlite-vec extension
 	"github.com/wouteroostervld/chainsaw/pkg/config"
@@ -926,11 +927,18 @@ func handleDaemonStart() {
 					continue
 				}
 
-				if err := fw.Watch(absPath); err != nil {
-					slog.Warn("Failed to watch directory", "path", absPath, "error", err)
-				} else {
-					watchedCount++
-					fmt.Printf("👁️  Watching: %s\n", absPath)
+				filepath.Walk(includePath, func(absolutePath, d fs.DirEntry) {
+					info, err := d.Info()
+					if err != nil {
+						slog.Warm("Could not stat","path", absolutePath, "error", err)
+					} else if info.IsDir() {
+						if err := fw.Watch(absPath); err != nil {
+							slog.Warn("Failed to watch directory", "path", absPath, "error", err)
+						} else {
+							watchedCount++
+							fmt.Printf("👁️  Watching: %s\n", absPath)
+						}
+					}
 				}
 			}
 		}
