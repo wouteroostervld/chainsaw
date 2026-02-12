@@ -926,11 +926,11 @@ func handleDaemonStart() {
 					continue
 				}
 
-				 filepath.Walk(includePath, func(absolutePath, d fs.DirEntry) {
+				filepath.Walk(includePath, func(absolutePath, d fs.DirEntry) {
 					info, err := d.Info()
 					if err != nil {
 						slog.Warm("Could not stat","path", absolutePath, "error", err)
-					} else if d.IsDir() and absolutePath {
+					} else if d.IsDir() {
 						if err := fw.Watch(absPath); err != nil {
 							slog.Warn("Failed to watch directory", "path", absPath, "error", err)
 						} else {
