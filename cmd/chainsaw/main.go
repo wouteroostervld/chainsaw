@@ -12,7 +12,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"fs"
 
 	_ "github.com/asg017/sqlite-vec-go-bindings/cgo" // Load sqlite-vec extension
 	"github.com/wouteroostervld/chainsaw/pkg/config"
@@ -721,19 +720,21 @@ func handleDaemonStart() {
 
 	startFlags.Parse(os.Args[3:])
 
-	logLevel := slog.LevelInfo
+	logLevel := new(slog.LevelVar)
+	logLevel.Set(slog.LevelError)
 	if *debug {
-		logLevel = slog.LevelDebug
+		logLevel.Set(slog.LevelDebug)
 	} else {
-		switch *logLevelStr {
-		case "debug":
-			logLevel = slog.LevelDebug
-		case "info":
-			logLevel = slog.LevelInfo
-		case "warn", "warning":
-			logLevel = slog.LevelWarn
-		case "error":
-			logLevel = slog.LevelError
+		logLevel.Set(slog.LevelError)
+		if logLevelStr != nil {
+			switch {
+			case *logLevelStr == "debug":
+				logLevel.Set(slog.LevelDebug)
+			case *logLevelStr == "info":
+				logLevel.Set(slog.LevelInfo)
+			case *logLevelStr == "warn" || *logLevelStr == "warning":
+				logLevel.Set(slog.LevelWarn)
+			}
 		}
 	}
 
@@ -926,20 +927,31 @@ func handleDaemonStart() {
 					slog.Warn("Skipping invalid path", "path", includePath, "error", err)
 					continue
 				}
-
-				filepath.Walk(includePath, func(absolutePath, d fs.DirEntry) {
-					info, err := d.Info()
+				err = filepath.WalkDir(absPath, func(path string, d os.DirEntry, err error) error {
 					if err != nil {
-						slog.Warm("Could not stat","path", absolutePath, "error", err)
-					} else if info.IsDir() {
-						if err := fw.Watch(absPath); err != nil {
-							slog.Warn("Failed to watch directory", "path", absPath, "error", err)
+						slog.Warn("Could not stat","path", path, "error", err)
+						return err
+					}
+					if d.IsDir() {
+						for _, excludePath := range profile.Exclude {
+							currentBase := filepath.Dir(path)
+							if ! filepath.IsAbs(excludePath) {
+								excludePath = filepath.Join(currentBase, excludePath)
+							}
+							if path == excludePath {
+								slog.Info("Excluding directory", "path", excludePath)
+								return filepath.SkipDir
+							}
+						}
+						if err := fw.Watch(path); err != nil {
+							slog.Warn("Failed to watch directory", "path", path, "error", err)
 						} else {
 							watchedCount++
-							fmt.Printf("👁️  Watching: %s\n", absPath)
+							slog.Info("👁️  Watching:", "path" , path)
 						}
 					}
-				}
+					return err
+				})
 			}
 		}
 	}
