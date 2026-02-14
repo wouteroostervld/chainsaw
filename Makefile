@@ -1,6 +1,6 @@
 .PHONY: build install update test clean daemon-install daemon-restart
 
-# Build the binary locally
+# Build the binary locallyx
 build:
 	go build -o chainsaw ./cmd/chainsaw
 
