@@ -15,8 +15,31 @@ permissions:
   contents: write
 
 jobs:
+  check:
+    name: Check for changes
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - name: Compare HEAD with the nightly tag
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Scheduled runs are skipped when the nightly tag already points at HEAD
+          if ! nightly_sha=$(gh api "repos/${{ github.repository }}/git/ref/tags/nightly" -q .object.sha 2>/dev/null); then
+            nightly_sha=""
+          fi
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$nightly_sha" = "${{ github.sha }}" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
   build:
     name: Build Release Binaries
+    needs: check
+    if: needs.check.outputs.changed == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -74,17 +97,27 @@ jobs:
         run: |
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             echo "name=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
             echo "prerelease=false" >> $GITHUB_OUTPUT
           else
             echo "name=nightly-$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+            echo "tag=nightly" >> $GITHUB_OUTPUT
             echo "prerelease=true" >> $GITHUB_OUTPUT
           fi
+
+      - name: Remove previous nightly
+        if: steps.release_name.outputs.tag == 'nightly'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release delete nightly --cleanup-tag --yes || true
 
       - name: Create or update release
         uses: softprops/action-gh-release@v1
         with:
           name: ${{ steps.release_name.outputs.name }}
-          tag_name: ${{ steps.release_name.outputs.name }}
+          tag_name: ${{ steps.release_name.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           prerelease: ${{ steps.release_name.outputs.prerelease }}
           files: artifacts/**/*
           body: |
