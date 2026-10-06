@@ -73,6 +73,9 @@ type Symbol struct {
 	Type      string // One of the Type* constants
 	Parent    int    // Index of the enclosing symbol, -1 at file level
 	Chunk     int    // Index of the chunk holding the definition
+	Signature string // The definition up to its body, e.g. "func (idx *Indexer) IndexFile(path string) error"
+	StartLine int    // 1-indexed, including the doc comment above the definition
+	EndLine   int    // 1-indexed, inclusive
 }
 
 // QualifiedName returns the name prefixed with its container, if any
@@ -276,6 +279,8 @@ func (b *builder) define(n *sitter.Node, dk defKind, sc scope) scope {
 		return sc
 	}
 
+	f := b.newFold(n)
+
 	inner := sc
 	if d.etype != "" {
 		if d.etype == TypeFunction && d.container == "" && sc.classCtx != "" {
@@ -289,6 +294,9 @@ func (b *builder) define(n *sitter.Node, dk defKind, sc scope) scope {
 			Container: d.container,
 			Type:      d.etype,
 			Parent:    sc.sym,
+			Signature: strings.Join(strings.Fields(f.header), " "),
+			StartLine: int(f.startRow) + 1,
+			EndLine:   int(f.endRow) + 1,
 		})
 		b.symFolds = append(b.symFolds, sc.fold)
 		inner.sym = len(b.file.Symbols) - 1
@@ -305,7 +313,6 @@ func (b *builder) define(n *sitter.Node, dk defKind, sc scope) scope {
 	}
 
 	if n.EndPosition().Row-n.StartPosition().Row+1 >= minFoldLines {
-		f := b.newFold(n)
 		f.title = d.name
 		if d.container != "" {
 			f.title = d.container + "." + d.name
@@ -645,4 +652,51 @@ func (b *builder) inline(f *fold, chunk int) {
 // place of its stub
 func Expand(content, stub, child string) string {
 	return strings.Replace(content, stub, strings.TrimSuffix(child, "\n"), 1)
+}
+
+// Render returns the file folded to its skeleton, with the given chunks (and
+// so the path of chunks leading to them) shown in full in place of their stubs
+func (f *File) Render(expanded map[int]bool) string {
+	open := make(map[int]bool)
+	for i := range expanded {
+		for ; i > 0 && !open[i]; i = f.Chunks[i].Parent {
+			open[i] = true
+		}
+	}
+	return f.render(0, open)
+}
+
+func (f *File) render(chunk int, open map[int]bool) string {
+	content := f.Chunks[chunk].Content
+	for i := chunk + 1; i < len(f.Chunks); i++ {
+		if f.Chunks[i].Parent == chunk && open[i] {
+			content = Expand(content, f.Chunks[i].Stub, f.render(i, open))
+		}
+	}
+	return content
+}
+
+// ChunkAt returns the innermost chunk that holds a line (1-indexed)
+func (f *File) ChunkAt(line int) int {
+	best := 0
+	for i, c := range f.Chunks {
+		if line >= c.StartLine && line <= c.EndLine && c.EndLine-c.StartLine <= f.Chunks[best].EndLine-f.Chunks[best].StartLine {
+			best = i
+		}
+	}
+	return best
+}
+
+// SymbolAt returns the innermost symbol that holds a line (1-indexed), or -1
+func (f *File) SymbolAt(line int) int {
+	best := -1
+	for i, s := range f.Symbols {
+		if line < s.StartLine || line > s.EndLine {
+			continue
+		}
+		if best < 0 || s.EndLine-s.StartLine <= f.Symbols[best].EndLine-f.Symbols[best].StartLine {
+			best = i
+		}
+	}
+	return best
 }
