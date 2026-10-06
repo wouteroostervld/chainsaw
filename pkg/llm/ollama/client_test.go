@@ -205,65 +205,6 @@ func TestGenerate(t *testing.T) {
 	}
 }
 
-func TestExtractEdges(t *testing.T) {
-	edgesJSON := `[
-{"source": "funcA", "target": "funcB", "relation_type": "calls", "weight": 0.8},
-{"source": "ClassX", "target": "ClassY", "relation_type": "inherits", "weight": 0.9}
-]`
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := GenerateResponse{
-			Response: edgesJSON,
-			Done:     true,
-		}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(&Config{BaseURL: server.URL, MaxRetries: 1})
-	ctx := context.Background()
-
-	edges, err := client.ExtractEdges(ctx, "llama2", "func funcA() { funcB() }")
-	if err != nil {
-		t.Fatalf("ExtractEdges failed: %v", err)
-	}
-
-	if len(edges) != 2 {
-		t.Errorf("got %d edges, want 2", len(edges))
-	}
-
-	if edges[0].Source != "funcA" || edges[0].Target != "funcB" {
-		t.Errorf("edge 0 mismatch: got %s->%s, want funcA->funcB", edges[0].Source, edges[0].Target)
-	}
-
-	if edges[0].RelationType != "calls" {
-		t.Errorf("edge 0 relation = %s, want calls", edges[0].RelationType)
-	}
-
-	if edges[1].RelationType != "inherits" {
-		t.Errorf("edge 1 relation = %s, want inherits", edges[1].RelationType)
-	}
-}
-
-func TestExtractEdges_InvalidJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := GenerateResponse{
-			Response: "This is not JSON",
-			Done:     true,
-		}
-		json.NewEncoder(w).Encode(resp)
-	}))
-	defer server.Close()
-
-	client := NewClient(&Config{BaseURL: server.URL, MaxRetries: 1})
-	ctx := context.Background()
-
-	_, err := client.ExtractEdges(ctx, "llama2", "code")
-	if err == nil {
-		t.Error("expected error for invalid JSON, got nil")
-	}
-}
-
 func TestPing(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -2,8 +2,6 @@ package ollama
 
 import (
 	"time"
-
-	"github.com/wouteroostervld/chainsaw/pkg/llm"
 )
 
 // EmbeddingRequest represents a request to generate embeddings
@@ -31,11 +29,6 @@ type GenerateResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 	Response  string    `json:"response"`
 	Done      bool      `json:"done"`
-}
-
-// ExtractionResult contains edges extracted from code
-type ExtractionResult struct {
-	Edges []llm.Edge `json:"edges"`
 }
 
 // JSON schema for structured output

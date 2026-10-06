@@ -111,13 +111,26 @@ func (db *DB) GetChunksForFile(fileID int64) ([]*Chunk, error) {
 	return chunks, nil
 }
 
-// DeleteChunksForFile removes all chunks associated with a file
+// DeleteChunksForFile removes all chunks associated with a file, along with
+// the entities, edges and symbols that were derived from them.
 // This is used when re-indexing a file
 func (db *DB) DeleteChunksForFile(fileID int64) error {
-	// Delete from vec_chunks (will cascade to graph_edges due to FK)
-	_, err := db.conn.Exec("DELETE FROM vec_chunks WHERE file_id = ?", fileID)
+	tx, err := db.conn.Begin()
 	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := deleteFileGraph(tx, fileID); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec("DELETE FROM vec_chunks WHERE file_id = ?", fileID); err != nil {
 		return fmt.Errorf("failed to delete chunks: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit chunk deletion: %w", err)
 	}
 	return nil
 }
@@ -127,6 +140,18 @@ type SearchResult struct {
 	Chunk         *Chunk
 	Distance      float64         // Cosine distance (lower is more similar)
 	RelatedChunks []*RelatedChunk // Graph-connected chunks
+
+	// Outline is set for files that were chunked along their syntax tree. It
+	// is what to show for the result, as selected by the SearchView: the
+	// matching definition, or the folded file with the hits shown in full.
+	// Hits lists the line ranges of all hits it covers.
+	Outline string
+	Hits    []LineRange
+}
+
+// LineRange is a range of lines in a file (1-indexed, inclusive)
+type LineRange struct {
+	Start, End int
 }
 
 // RelatedChunk represents a chunk connected via graph edges
@@ -167,9 +192,11 @@ func (db *DB) SearchSimilar(queryEmbedding []float32, limit int, pathFilter stri
 
 	args := []interface{}{queryBytes, limit}
 
-	// Add path filtering if specified
+	// Limit the search itself to the files under the path. Filtering the
+	// nearest chunks afterwards would leave few or none when other projects
+	// in the index are closer to the query.
 	if pathFilter != "" {
-		query += "\n  AND f.path LIKE ?"
+		query += "\n  AND c.file_id IN (SELECT id FROM files WHERE path LIKE ?)"
 		args = append(args, pathFilter)
 	}
 
@@ -210,10 +237,29 @@ func (db *DB) SearchSimilar(queryEmbedding []float32, limit int, pathFilter stri
 	return results, nil
 }
 
+// SearchView selects how much context a search result carries for files that
+// were chunked along their syntax tree
+type SearchView string
+
+const (
+	// ViewBody serves just the definition that matched
+	ViewBody SearchView = "body"
+	// ViewFile serves the folded file with the matches shown in full
+	ViewFile SearchView = "file"
+	// ViewCalls also shows in full what the matches call: in place for the
+	// same file, as related chunks for other files
+	ViewCalls SearchView = "calls"
+)
+
 // SearchWithRelations is like SearchSimilar but also includes graph-connected chunks
-func (db *DB) SearchWithRelations(queryEmbedding []float32, limit int, maxDepth int, pathFilter string) ([]*SearchResult, error) {
+func (db *DB) SearchWithRelations(queryEmbedding []float32, limit int, maxDepth int, pathFilter string, view SearchView) ([]*SearchResult, error) {
 	// First get vector search results WITH path filtering
 	results, err := db.SearchSimilar(queryEmbedding, limit, pathFilter)
+	if err != nil {
+		return nil, err
+	}
+
+	results, err = db.attachOutlines(results, pathFilter, view)
 	if err != nil {
 		return nil, err
 	}

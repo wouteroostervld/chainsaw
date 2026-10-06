@@ -89,6 +89,25 @@ chainsaw search "HTTP middleware with error handling"
 
 **Context-aware:** Results are automatically filtered to the current directory and subdirectories.
 
+**Reading a result:** for source code (and Markdown) a result is the whole file, folded. The definitions that matched, and the ones they call in that file, are shown in full. Everything else is one line: its signature and where the body is.
+
+```go
+func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error // ... chunk: lines 80-161
+```
+
+The **Lines** in the result header are the hits. To see a folded body, read those lines of the file. Definitions called in other files are listed under *Related Chunks*.
+
+Choose how much comes back with `--expand`, and how many chunks are matched with `--limit`:
+
+```bash
+chainsaw search --expand body "..."    # Just the matching definition: smallest
+chainsaw search --expand file "..."    # Folded file with the matches in full
+chainsaw search --expand calls "..."   # Plus what the matches call, other files too (default)
+chainsaw search --limit 3 "..."
+```
+
+Start with `body` or `file` when context is tight; use `calls` when you need to follow the code.
+
 ### 3. Graph Queries
 
 Query code relationships using Cypher-like syntax:
@@ -123,24 +142,24 @@ chainsaw graph query "
 
 ### Entity Types
 
-- `FUNCTION` - Functions and top-level functions
-- `METHOD` - Methods on structs/classes
-- `TYPE` - Type definitions
-- `INTERFACE` - Interface definitions
-- `STRUCT` - Struct/class definitions
-- `PACKAGE` - Package/module imports
-- `VARIABLE` - Variables
-- `CONSTANT` - Constants
+- `FUNCTION` - Functions
+- `METHOD` - Methods; named `Type.method`
+- `CLASS` - Classes and modules
+- `STRUCT` - Struct definitions
+- `INTERFACE` - Interfaces and traits
+- `TYPE` - Other type definitions
+- `PACKAGE` - A source file's package or module, and imported packages
+- `EXTERNAL` - Called but not defined in the index (e.g. `fmt.Println`)
 
 ### Relation Types
 
-- `calls` - Function/method invocations
-- `uses` - References and usage
+- `calls` - Function/method calls with a known target
+- `may_call` - Calls that may end up there. In Go: a call through an interface, to the method of each implementing type. In other languages: a method call on a value of unknown type, to every definition with that name
+- `implements` - A type implements an interface (Go)
 - `imports` - Package imports
-- `implements` - Interface implementations
-- `extends` - Type extensions/embedding
-- `defines` - Definitions
-- `has_field` - Struct field relationships
+- `defines` - A package defines its functions and types, a class its methods
+
+Edges come from the syntax tree, and for Go from the type checker, not from an LLM. In Go `calls` is exact: a call through an interface points at the interface's method (`Database.UpsertFile`), so to find the callers of an implementation query both `calls` and `may_call`.
 
 ### Multi-Hop Queries
 
@@ -218,30 +237,6 @@ profiles:
     embedding_model: "nomic-embed-text"
     chunk_size: 512
     overlap: 64
-    
-    # Graph extraction
-    graph_driver:
-      model: "qwen2.5:3b"
-      batch_size: 100
-```
-
-### Using Cloud LLMs for Graph Extraction
-
-Keep embeddings local, use cloud for graph:
-
-```yaml
-profiles:
-  default:
-    embedding_model: "nomic-embed-text"  # Local
-    
-    # Cloud LLM for graph extraction
-    llm_provider: "openai"
-    llm_base_url: "https://openrouter.ai/api/v1"
-    llm_api_key: "${OPENROUTER_API_KEY}"
-    
-    graph_driver:
-      model: "anthropic/claude-3.5-haiku"
-      batch_size: 100
 ```
 
 ## Tips and Best Practices
@@ -387,7 +382,7 @@ chainsaw graph query "
 
 - **Read-only** - Cannot modify code
 - **No cross-project queries** - Search scoped to current directory tree
-- **Language-agnostic extraction** - Graph quality depends on LLM model
+- **Graph only for parsed languages** - Go, Python, JS/TS, Rust, Java, C/C++, Ruby; other files are searchable but have no graph
 - **Index lag** - New changes take a few seconds to index
 - **No version control** - Searches current state only, not history
 

@@ -33,7 +33,6 @@ blacklist:
 # ❌ CANNOT OVERRIDE:
 # - whitelist (global exceptions only)
 # - embedding_model, chunk_size, overlap
-# - graph_driver settings
 # - include (daemon ignores local include)
 
 # EXAMPLES:

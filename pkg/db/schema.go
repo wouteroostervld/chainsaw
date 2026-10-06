@@ -1,7 +1,7 @@
 package db
 
 // Schema version for migration tracking
-const SchemaVersion = "2.4.0"
+const SchemaVersion = "2.7.0"
 
 // DDL statements for database initialization
 const (
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS graph_edges (
     relation_type TEXT NOT NULL,
     chunk_id INTEGER NOT NULL,
     weight REAL DEFAULT 1.0,
-    PRIMARY KEY (source_entity_id, target_entity_id, chunk_id),
+    PRIMARY KEY (source_entity_id, target_entity_id, relation_type, chunk_id),
     FOREIGN KEY(source_entity_id) REFERENCES entities(id) ON DELETE CASCADE,
     FOREIGN KEY(target_entity_id) REFERENCES entities(id) ON DELETE CASCADE
 );`
@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS graph_edges (
     relation_type TEXT NOT NULL,
     chunk_id INTEGER NOT NULL,
     weight REAL DEFAULT 1.0,
-    PRIMARY KEY (source_entity_id, target_entity_id, chunk_id),
+    PRIMARY KEY (source_entity_id, target_entity_id, relation_type, chunk_id),
     FOREIGN KEY(source_entity_id) REFERENCES entities(id) ON DELETE CASCADE,
     FOREIGN KEY(target_entity_id) REFERENCES entities(id) ON DELETE CASCADE
 );`
@@ -123,18 +123,86 @@ CREATE INDEX IF NOT EXISTS idx_graph_target ON graph_edges(target_entity_id);`
 	CreateGraphRelationIndex = `
 CREATE INDEX IF NOT EXISTS idx_graph_relation ON graph_edges(relation_type);`
 
-	// Chunk graph state table tracks which chunks have had graph extraction performed
-	// Separate table since vec_chunks is a virtual table that can't be altered
-	CreateChunkGraphStateTable = `
-CREATE TABLE IF NOT EXISTS chunk_graph_state (
-    chunk_id INTEGER PRIMARY KEY,
-    graph_extracted BOOLEAN DEFAULT 0,
-    extracted_at DATETIME
+	// Symbol definitions found by parsing source files. Each row marks an
+	// entity as a real definition, as opposed to a placeholder for something
+	// outside the index.
+	CreateSymbolDefsTable = `
+CREATE TABLE IF NOT EXISTS symbol_defs (
+    entity_id INTEGER PRIMARY KEY,
+    file_id INTEGER NOT NULL,
+    root TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL,
+    container TEXT NOT NULL DEFAULT ''
 );`
 
-	// Index for finding unextracted chunks
-	CreateChunkGraphStateIndex = `
-CREATE INDEX IF NOT EXISTS idx_chunk_graph_extracted ON chunk_graph_state(graph_extracted);`
+	CreateSymbolDefsNameIndex = `
+CREATE INDEX IF NOT EXISTS idx_symbol_defs_name ON symbol_defs(name);`
+
+	CreateSymbolDefsFileIndex = `
+CREATE INDEX IF NOT EXISTS idx_symbol_defs_file ON symbol_defs(file_id);`
+
+	// Symbol references (calls, imports) found by parsing source files.
+	// Graph edges are derived from these by matching names to definitions,
+	// which can be redone whenever definitions appear or disappear.
+	CreateSymbolRefsTable = `
+CREATE TABLE IF NOT EXISTS symbol_refs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER NOT NULL,
+    root TEXT NOT NULL DEFAULT '',
+    source_entity_id INTEGER NOT NULL,
+    chunk_id INTEGER NOT NULL,
+    relation_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    container TEXT NOT NULL DEFAULT '',
+    import_base TEXT NOT NULL DEFAULT '',
+    target_path TEXT NOT NULL DEFAULT '',
+    external_name TEXT NOT NULL,
+    member BOOLEAN NOT NULL DEFAULT 0,
+    resolved BOOLEAN NOT NULL DEFAULT 0
+);`
+
+	CreateSymbolRefsNameIndex = `
+CREATE INDEX IF NOT EXISTS idx_symbol_refs_name ON symbol_refs(name);`
+
+	CreateSymbolRefsFileIndex = `
+CREATE INDEX IF NOT EXISTS idx_symbol_refs_file ON symbol_refs(file_id);`
+
+	CreateSymbolRefsResolvedIndex = `
+CREATE INDEX IF NOT EXISTS idx_symbol_refs_resolved ON symbol_refs(resolved);`
+
+	// Names whose definitions changed; references to them need resolving again
+	CreateSymbolDirtyTable = `
+CREATE TABLE IF NOT EXISTS symbol_dirty (
+    name TEXT PRIMARY KEY
+);`
+
+	// Outline nodes are the semantic chunks of a parsed file, as a tree: the
+	// file skeleton at the root, each folded definition below the node whose
+	// content holds its stub. A node keeps its full content even when it had
+	// to be split into several chunks for embedding.
+	CreateOutlineNodesTable = `
+CREATE TABLE IF NOT EXISTS outline_nodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id INTEGER NOT NULL,
+    parent_id INTEGER NOT NULL DEFAULT 0,
+    start_line INTEGER NOT NULL,
+    end_line INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    stub TEXT NOT NULL DEFAULT ''
+);`
+
+	CreateOutlineNodesFileIndex = `
+CREATE INDEX IF NOT EXISTS idx_outline_nodes_file ON outline_nodes(file_id);`
+
+	// Maps each embedded chunk to the outline node it is (part of)
+	CreateChunkNodesTable = `
+CREATE TABLE IF NOT EXISTS chunk_nodes (
+    chunk_id INTEGER PRIMARY KEY,
+    node_id INTEGER NOT NULL
+);`
+
+	CreateChunkNodesNodeIndex = `
+CREATE INDEX IF NOT EXISTS idx_chunk_nodes_node ON chunk_nodes(node_id);`
 
 	// Enable WAL mode for concurrent reads/writes
 	EnableWALMode = `PRAGMA journal_mode=WAL;`

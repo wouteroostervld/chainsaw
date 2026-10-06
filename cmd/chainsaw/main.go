@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -21,7 +22,6 @@ import (
 	"github.com/wouteroostervld/chainsaw/pkg/indexer"
 	"github.com/wouteroostervld/chainsaw/pkg/llm"
 	"github.com/wouteroostervld/chainsaw/pkg/llm/ollama"
-	"github.com/wouteroostervld/chainsaw/pkg/llm/openai"
 	"github.com/wouteroostervld/chainsaw/pkg/watcher"
 	"github.com/wouteroostervld/chainsaw/pkg/worker"
 )
@@ -263,20 +263,69 @@ func indentLines(text, indent string) string {
 }
 
 func handleSearch() {
-	if len(os.Args) < 3 {
-		fmt.Println("Usage: chainsaw search <query>")
+	usage := func() {
+		fmt.Println("Usage: chainsaw search [options] <query>")
 		fmt.Println()
 		fmt.Println("Searches indexed code using semantic similarity.")
 		fmt.Println("Results are automatically scoped to the current directory and subdirectories.")
 		fmt.Println()
+		fmt.Println("Options:")
+		fmt.Println("  --expand body   Just the definition that matched")
+		fmt.Println("  --expand file   The folded file, with the matches shown in full")
+		fmt.Println("  --expand calls  Also what the matches call, in other files too (default)")
+		fmt.Println("  --limit N       Number of chunks to match (default 10)")
+		fmt.Println()
 		fmt.Println("Examples:")
 		fmt.Println("  cd /project/pkg/db")
 		fmt.Println("  chainsaw search \"database connection\"")
-		fmt.Println("  chainsaw search \"error handling patterns\"")
+		fmt.Println("  chainsaw search --expand body \"error handling patterns\"")
+	}
+
+	// Options may come before or after the query
+	view := db.ViewCalls
+	limit := 10
+	var words []string
+	args := os.Args[2:]
+	for i := 0; i < len(args); i++ {
+		name, value, hasValue := strings.Cut(args[i], "=")
+		switch name {
+		case "--expand", "--limit":
+			if !hasValue {
+				if i+1 >= len(args) {
+					fmt.Fprintf(os.Stderr, "Error: %s needs a value\n\n", name)
+					usage()
+					os.Exit(1)
+				}
+				i++
+				value = args[i]
+			}
+			if name == "--limit" {
+				n, err := strconv.Atoi(value)
+				if err != nil || n < 1 {
+					fmt.Fprintf(os.Stderr, "Error: --limit must be a positive number, got %q\n", value)
+					os.Exit(1)
+				}
+				limit = n
+				continue
+			}
+			view = db.SearchView(value)
+			if view != db.ViewBody && view != db.ViewFile && view != db.ViewCalls {
+				fmt.Fprintf(os.Stderr, "Error: --expand must be body, file or calls, got %q\n", value)
+				os.Exit(1)
+			}
+		case "-h", "--help":
+			usage()
+			return
+		default:
+			words = append(words, args[i])
+		}
+	}
+	if len(words) == 0 {
+		usage()
 		os.Exit(1)
 	}
 
-	query := os.Args[2]
+	query := strings.Join(words, " ")
 
 	// Get current working directory for path filtering
 	cwd, err := os.Getwd()
@@ -320,10 +369,16 @@ func handleSearch() {
 		BaseURL: "http://localhost:11434",
 	})
 
-	// Generate embedding for query
+	// Generate embedding for query, with the model the index was built with
+	embedModel := indexer.DefaultConfig().EmbedModel
+	if cfg, err := config.LoadGlobalConfigFromPath(filepath.Join(os.Getenv("HOME"), ".chainsaw", "config.yaml"), &config.RealFileSystem{}); err == nil {
+		if profile := cfg.Profiles[cfg.ActiveProfile]; profile != nil && profile.EmbeddingModel != "" {
+			embedModel = profile.EmbeddingModel
+		}
+	}
 	fmt.Printf("🔍 Searching for: %s\n\n", query)
 	ctx := context.Background()
-	embeddings, err := ollamaClient.Embed(ctx, "nomic-embed-text", []string{query}, 1)
+	embeddings, err := ollamaClient.Embed(ctx, embedModel, []string{llm.QueryText(embedModel, query)}, 1)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating embedding: %v\n", err)
 		os.Exit(1)
@@ -335,7 +390,7 @@ func handleSearch() {
 	embedding := embeddings[0]
 
 	// Search with relations (depth=1 for direct connections) WITH path filtering
-	results, err := database.SearchWithRelations(embedding, 10, 1, pathFilter)
+	results, err := database.SearchWithRelations(embedding, limit, 1, pathFilter, view)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error searching: %v\n", err)
 		os.Exit(1)
@@ -365,15 +420,26 @@ func handleSearch() {
 
 		fmt.Printf("---\n\n")
 		fmt.Printf("## %d/%d. %s\n\n", i+1, len(results), filepath.Base(file.Path))
-		fmt.Printf("**File:** `%s` | **Lines:** %d-%d | **Distance:** %.4f\n\n",
+		// Files chunked along their syntax tree are shown folded, with the
+		// hits and what they call expanded
+		lines := fmt.Sprintf("%d-%d", result.Chunk.StartLine, result.Chunk.EndLine)
+		content := result.Chunk.ContentSnippet
+		if result.Outline != "" {
+			hits := make([]string, len(result.Hits))
+			for j, hit := range result.Hits {
+				hits[j] = fmt.Sprintf("%d-%d", hit.Start, hit.End)
+			}
+			lines = strings.Join(hits, ", ")
+			content = result.Outline
+		}
+
+		fmt.Printf("**File:** `%s` | **Lines:** %s | **Distance:** %.4f\n\n",
 			file.Path,
-			result.Chunk.StartLine,
-			result.Chunk.EndLine,
+			lines,
 			result.Distance,
 		)
 
 		// Ensure content ends with newline for proper markdown fence
-		content := result.Chunk.ContentSnippet
 		if !strings.HasSuffix(content, "\n") {
 			content += "\n"
 		}
@@ -483,8 +549,12 @@ func createFileFilter(cfg *config.GlobalConfig) func(string) bool {
 	}
 
 	return func(path string) bool {
-		// Only check file blacklist/whitelist, skip directory check
-		// (Directory Include/Exclude doesn't work with absolute paths during indexing)
+		// Indexing a path by hand is not limited to the included directories,
+		// but excluded ones are skipped just as the daemon skips them
+		dir := filepath.Dir(path)
+		if dirOk, _ := filter.ShouldIndexDirectory(dir, []string{dir}, profile.Exclude); !dirOk {
+			return false
+		}
 		fileOk, _ := filter.ShouldIndexFile(path, profile.Blacklist, profile.Whitelist)
 		return fileOk
 	}
@@ -771,51 +841,11 @@ func handleDaemonStart() {
 		fmt.Printf("✓ Config loaded from %s\n", configPath)
 	}
 
-	// Get active profile for LLM settings
-	profile := globalCfg.Profiles[globalCfg.ActiveProfile]
-	if profile == nil {
-		profile = &config.Profile{}
-	}
-
 	// Create embedding client (always local Ollama)
 	embeddingClient := ollama.NewClient(&ollama.Config{
 		BaseURL: "http://localhost:11434",
 		Timeout: 5 * time.Minute,
 	})
-
-	// Create graph extraction client (based on config)
-	var graphClient llm.GraphExtractor
-
-	// Determine provider: explicit config > URL detection > default to ollama
-	provider := strings.ToLower(profile.LLMProvider)
-	if provider == "" && profile.LLMBaseURL != "" {
-		// Auto-detect from URL
-		if strings.Contains(profile.LLMBaseURL, "openrouter") || strings.Contains(profile.LLMBaseURL, "openai") {
-			provider = "openai"
-		}
-	}
-
-	if provider == "openai" {
-		// Use OpenAI-compatible client (OpenRouter, Azure OpenAI, etc.)
-		graphClient = openai.NewClient(&openai.Config{
-			BaseURL: profile.LLMBaseURL,
-			APIKey:  profile.LLMAPIKey,
-			Timeout: 5 * time.Minute,
-		})
-		slog.Info("Using OpenAI-compatible API for graph extraction", "base_url", profile.LLMBaseURL)
-	} else {
-		// Use local Ollama for graph extraction (default)
-		graphClient = ollama.NewClient(&ollama.Config{
-			BaseURL: func() string {
-				if profile.LLMBaseURL != "" {
-					return profile.LLMBaseURL
-				}
-				return "http://localhost:11434"
-			}(),
-			Timeout: 5 * time.Minute,
-		})
-		slog.Info("Using Ollama for graph extraction")
-	}
 
 	ctx := context.Background()
 	if err := embeddingClient.Ping(ctx); err != nil {
@@ -832,20 +862,10 @@ func handleDaemonStart() {
 			indexerCfg.EmbedModel = profile.EmbeddingModel
 			indexerCfg.ChunkSize = profile.ChunkSize
 			indexerCfg.ChunkOverlap = profile.Overlap
-			// Set graph model from config if provided
-			if profile.GraphDriver != nil {
-				if profile.GraphDriver.Model != "" {
-					indexerCfg.GraphModel = profile.GraphDriver.Model
-				}
-				// Set graph batch size from config if provided
-				if profile.GraphDriver.BatchSize > 0 {
-					indexerCfg.GraphBatchSize = profile.GraphDriver.BatchSize
-				}
-			}
 		}
 	}
-	idx := indexer.NewWithSeparateClients(indexerCfg, database, embeddingClient, graphClient)
-	slog.Info("Indexer initialized", "model", indexerCfg.EmbedModel, "chunk_size", indexerCfg.ChunkSize, "graph_batch_size", indexerCfg.GraphBatchSize)
+	idx := indexer.New(indexerCfg, database, embeddingClient)
+	slog.Info("Indexer initialized", "model", indexerCfg.EmbedModel, "chunk_size", indexerCfg.ChunkSize)
 
 	indexWorker := worker.NewIndexWorker(&worker.Config{
 		DB:           database,
@@ -867,19 +887,6 @@ func handleDaemonStart() {
 			slog.Error("Index worker error", "error", err)
 		}
 	}()
-
-	// Start graph extraction worker
-	if indexerCfg.EnableGraphMode {
-		graphWorker := indexer.NewGraphWorker(idx, indexer.GraphWorkerConfig{
-			PollInterval: 5 * time.Second,
-			BatchSize:    150, // Fetch up to 150 chunks to process
-			Concurrency:  1,   // Process 1 batch at a time (can be configured later)
-		})
-
-		go func() {
-			graphWorker.Start(workerCtx)
-		}()
-	}
 
 	fileFilter := createDaemonFileFilter(globalCfg)
 
@@ -929,13 +936,13 @@ func handleDaemonStart() {
 				}
 				err = filepath.WalkDir(absPath, func(path string, d os.DirEntry, err error) error {
 					if err != nil {
-						slog.Warn("Could not stat","path", path, "error", err)
+						slog.Warn("Could not stat", "path", path, "error", err)
 						return err
 					}
 					if d.IsDir() {
 						for _, excludePath := range profile.Exclude {
 							currentBase := filepath.Dir(path)
-							if ! filepath.IsAbs(excludePath) {
+							if !filepath.IsAbs(excludePath) {
 								excludePath = filepath.Join(currentBase, excludePath)
 							}
 							if path == excludePath {
@@ -947,7 +954,7 @@ func handleDaemonStart() {
 							slog.Warn("Failed to watch directory", "path", path, "error", err)
 						} else {
 							watchedCount++
-							slog.Info("👁️  Watching:", "path" , path)
+							slog.Info("👁️  Watching:", "path", path)
 						}
 					}
 					return err
@@ -1114,4 +1121,5 @@ func createDaemonFileFilter(cfg *config.GlobalConfig) func(string) bool {
 		}
 		return fileOk
 	}
+
 }

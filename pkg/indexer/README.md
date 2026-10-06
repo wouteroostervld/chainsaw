@@ -7,7 +7,7 @@ The indexer package coordinates the file-to-embedding-to-graph pipeline for Chai
 - **Content Chunking**: Split files into overlapping chunks for better context
 - **Batch Processing**: Process multiple chunks in parallel with configurable concurrency
 - **Embedding Generation**: Generate vector embeddings via Ollama
-- **Knowledge Graph Extraction**: Extract semantic relations from code (optional)
+- **Knowledge Graph**: Definitions, calls and imports read from the syntax tree
 - **Incremental Updates**: Skip unchanged files based on content hash
 - **Filtering Support**: Process only files matching filter criteria
 
@@ -52,10 +52,8 @@ type Config struct {
     ChunkSize       int    // Bytes per chunk (default: 512)
     ChunkOverlap    int    // Overlapping bytes (default: 64)
     EmbedModel      string // Embedding model (default: "nomic-embed-text")
-    GraphModel      string // Graph extraction model (default: "llama2")
     BatchSize       int    // Chunks per batch (default: 10)
     MaxConcurrency  int    // Max parallel ops (default: 5)
-    EnableGraphMode bool   // Extract edges (default: true)
     MinChunkSize    int    // Skip tiny chunks (default: 10)
     MaxChunkSize    int    // Truncate large chunks (default: 4096)
 }
@@ -63,7 +61,12 @@ type Config struct {
 
 ## Chunking Strategy
 
-Files are split using a sliding window approach:
+Files in a known syntax are chunked along their syntax tree by `pkg/chunker`:
+each definition is a chunk, folded to its signature in the enclosing chunk.
+The same parse provides the entities and call/import edges of the graph.
+
+Other files, and chunks that stay too large after folding, are split using a
+sliding window approach:
 - Window size: `ChunkSize` bytes
 - Stride: `ChunkSize - ChunkOverlap` bytes  
 - Overlap ensures context preservation across boundaries

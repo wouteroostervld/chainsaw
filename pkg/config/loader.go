@@ -96,9 +96,6 @@ func MergeConfigForDaemon(global *GlobalConfig, local *LocalConfig, localConfigD
 		EmbeddingModel: profile.EmbeddingModel,
 		ChunkSize:      profile.ChunkSize,
 		Overlap:        profile.Overlap,
-		LLMBaseURL:     profile.LLMBaseURL,
-		LLMAPIKey:      profile.LLMAPIKey,
-		GraphDriver:    profile.GraphDriver,
 		ProfileName:    global.ActiveProfile,
 	}
 
@@ -138,9 +135,6 @@ func MergeConfigForCLI(global *GlobalConfig, local *LocalConfig, localConfigDir 
 		EmbeddingModel: profile.EmbeddingModel,
 		ChunkSize:      profile.ChunkSize,
 		Overlap:        profile.Overlap,
-		LLMBaseURL:     profile.LLMBaseURL,
-		LLMAPIKey:      profile.LLMAPIKey,
-		GraphDriver:    profile.GraphDriver,
 		ProfileName:    global.ActiveProfile,
 	}
 

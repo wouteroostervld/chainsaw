@@ -1,0 +1,648 @@
+// Package chunker splits source files into semantic chunks using tree-sitter.
+//
+// A file becomes a tree of chunks. The root chunk is the file skeleton: every
+// definition (function, method, class, ...) is folded down to its signature
+// plus a comment that points at the lines of the chunk holding the body. Each
+// folded definition is a chunk of its own, with its nested definitions folded
+// the same way.
+//
+// A chunk that is still larger than the embedding limit gets its biggest
+// statements (loops, branches, literals) folded the same way, until it fits.
+//
+// The same parse also yields the symbols a file defines and the calls and
+// imports it contains, so the knowledge graph can be built from the syntax
+// tree instead of being guessed by an LLM.
+//
+// Markup is chunked too, without symbols: Markdown along its sections, HTML
+// and XML by folding the largest elements of a chunk that is too big.
+package chunker
+
+import (
+	"fmt"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	sitter "github.com/tree-sitter/go-tree-sitter"
+)
+
+// Entity types of the symbols the chunker reports
+const (
+	TypeFunction  = "FUNCTION"
+	TypeMethod    = "METHOD"
+	TypeClass     = "CLASS"
+	TypeStruct    = "STRUCT"
+	TypeInterface = "INTERFACE"
+	TypeType      = "TYPE"
+	TypePackage   = "PACKAGE"
+)
+
+// Relation types of the references the chunker reports
+const (
+	RelationCalls   = "calls"
+	RelationImports = "imports"
+)
+
+// minFoldLines is the smallest definition that gets a chunk of its own.
+// Anything shorter stays inline in the enclosing chunk: a chunk of a few
+// lines says too little to be found by what it does, and gets in the way of
+// the chunks that do.
+const minFoldLines = 5
+
+// minBlockLines is the smallest statement that is folded out of a chunk that
+// is too large
+const minBlockLines = 8
+
+// Chunk is one semantic chunk of a file
+type Chunk struct {
+	Content     string
+	Stub        string // Text that stands in for this chunk in its parent's content
+	Title       string // The definition or section this chunk is, or is part of; empty for the file itself
+	StartLine   int    // 1-indexed
+	EndLine     int    // 1-indexed, inclusive
+	StartOffset int    // Byte offset into the file
+	EndOffset   int    // Byte offset into the file (exclusive)
+	Parent      int    // Index of the enclosing chunk, -1 for the file skeleton
+	Verbatim    bool   // Content is the unmodified source range (nothing folded)
+}
+
+// Symbol is a definition found in the file
+type Symbol struct {
+	Name      string // Bare name, e.g. "IndexFile"
+	Container string // Class or receiver type for methods, e.g. "Indexer"
+	Type      string // One of the Type* constants
+	Parent    int    // Index of the enclosing symbol, -1 at file level
+	Chunk     int    // Index of the chunk holding the definition
+}
+
+// QualifiedName returns the name prefixed with its container, if any
+func (s Symbol) QualifiedName() string {
+	if s.Container == "" {
+		return s.Name
+	}
+	return s.Container + "." + s.Name
+}
+
+// Ref is a reference from a symbol to something identified by name
+type Ref struct {
+	Source     int    // Index of the referencing symbol, -1 at file level
+	Relation   string // One of the Relation* constants
+	Name       string // Bare name of the target
+	Container  string // Container the target must be in, when known (self.x(), this.x())
+	ImportBase string // Last element of the import path the target comes from, when known
+	TargetPath string // File the target is declared in, when a type checker resolved it
+	External   string // Display name to use when the target is not in the index; empty for language built-ins
+	Member     bool   // Reached through a receiver expression (x.name())
+}
+
+// File is the result of parsing a source file
+type File struct {
+	Language string
+	Markup   bool    // A document rather than code: it has chunks, but no symbols
+	Module   string  // Package name, or the file name without extension
+	Chunks   []Chunk // Chunks[0] is the file skeleton
+	Symbols  []Symbol
+	Refs     []Ref
+}
+
+// Supported reports whether the file's language can be parsed
+func Supported(path string) bool {
+	return specFor(path) != nil
+}
+
+// Parse splits a source file into semantic chunks and extracts its symbols
+// and references. Chunks larger than maxChunkSize bytes are folded further
+// where the syntax allows; 0 means no limit. It returns false when the
+// language is not supported.
+func Parse(path string, src []byte, maxChunkSize int) (*File, bool) {
+	spec := specFor(path)
+	if spec == nil {
+		return nil, false
+	}
+
+	base := filepath.Base(path)
+	b := &builder{
+		spec:    spec,
+		src:     src,
+		maxSize: maxChunkSize,
+		imports: make(map[string]importInfo),
+		seen:    make(map[Ref]bool),
+		file: &File{
+			Language: spec.name,
+			Markup:   spec.markup,
+			Module:   strings.TrimSuffix(base, filepath.Ext(base)),
+		},
+	}
+
+	if spec.grammar == nil {
+		b.render(markdownSections(b), -1)
+		return b.file, true
+	}
+
+	parser := sitter.NewParser()
+	defer parser.Close()
+	if err := parser.SetLanguage(spec.language()); err != nil {
+		return nil, false
+	}
+	tree := parser.Parse(src, nil)
+	if tree == nil {
+		return nil, false
+	}
+	defer tree.Close()
+
+	root := tree.RootNode()
+	b.collectImports(root)
+
+	rootFold := &fold{node: root, start: 0, end: uint(len(src)), startRow: 0, endRow: root.EndPosition().Row}
+	b.walk(root, scope{fold: rootFold, sym: -1})
+
+	b.render(rootFold, -1)
+	for i, f := range b.symFolds {
+		b.file.Symbols[i].Chunk = f.chunk
+	}
+
+	return b.file, true
+}
+
+// fold is a source range that is replaced by a stub in its parent chunk
+type fold struct {
+	node             *sitter.Node
+	title            string
+	start, end       uint // Byte range, including leading comments
+	startRow, endRow uint
+	indent           string
+	header           string // Signature shown in the parent chunk
+	children         []*fold
+	chunk            int
+}
+
+// scope is the context a node is visited in
+type scope struct {
+	fold      *fold  // Nearest enclosing fold
+	sym       int    // Nearest enclosing symbol, -1 at file level
+	classCtx  string // Container whose body we are directly in
+	selfCtx   string // Container that self/this refers to
+	selfName  string // Name of the receiver variable (Go)
+	container bool   // The enclosing symbol is a container
+}
+
+// def describes a definition node; language hooks may adjust it
+type def struct {
+	name      string
+	etype     string
+	container string // Explicit container (Go receiver, C++ qualified name)
+	selfName  string
+	holds     bool // Functions directly inside are its methods, whatever the node kind says
+}
+
+type importInfo struct {
+	path   string // Module path as written
+	base   string // Last element of the module path
+	symbol string // Name imported from the module; empty when the module itself is bound
+}
+
+type builder struct {
+	spec     *langSpec
+	src      []byte
+	maxSize  int
+	file     *File
+	imports  map[string]importInfo
+	seen     map[Ref]bool
+	symFolds []*fold // Fold holding each symbol, parallel to file.Symbols
+}
+
+func (b *builder) text(n *sitter.Node) string {
+	if n == nil {
+		return ""
+	}
+	return string(b.src[n.StartByte():n.EndByte()])
+}
+
+func (b *builder) collectImports(n *sitter.Node) {
+	if b.spec.imports == nil {
+		return
+	}
+	if b.spec.importKinds[n.Kind()] {
+		b.spec.imports(b, n)
+		return
+	}
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		b.collectImports(n.NamedChild(i))
+	}
+}
+
+// addImport records an import and the name it is bound to in the file
+func (b *builder) addImport(local, path, symbol string) {
+	path = strings.Trim(path, "\"'`<>")
+	if path == "" {
+		return
+	}
+	info := importInfo{path: path, base: b.spec.importBase(path), symbol: symbol}
+	if local != "" && local != "_" && local != "." {
+		b.imports[local] = info
+	}
+	if info.base != "" {
+		b.addRef(Ref{Source: -1, Relation: RelationImports, Name: info.base, ImportBase: info.base, External: path})
+	}
+}
+
+func (b *builder) addRef(r Ref) {
+	if r.Name == "" || b.seen[r] {
+		return
+	}
+	b.seen[r] = true
+	b.file.Refs = append(b.file.Refs, r)
+}
+
+func (b *builder) walk(n *sitter.Node, sc scope) {
+	kind := n.Kind()
+	if dk, ok := b.spec.defs[kind]; ok {
+		sc = b.define(n, dk, sc)
+	} else if field, ok := b.spec.calls[kind]; ok {
+		b.call(n, field, sc)
+	}
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		b.walk(n.NamedChild(i), sc)
+	}
+}
+
+// define handles a definition node and returns the scope for its children
+func (b *builder) define(n *sitter.Node, dk defKind, sc scope) scope {
+	d := def{etype: dk.etype, name: b.text(n.ChildByFieldName("name"))}
+	if b.spec.describe != nil && !b.spec.describe(b, n, &d) {
+		return sc
+	}
+	if d.name == "" && dk.etype != "" {
+		return sc
+	}
+
+	inner := sc
+	if d.etype != "" {
+		if d.etype == TypeFunction && d.container == "" && sc.classCtx != "" {
+			d.container = sc.classCtx
+		}
+		if d.etype == TypeFunction && d.container != "" {
+			d.etype = TypeMethod
+		}
+		b.file.Symbols = append(b.file.Symbols, Symbol{
+			Name:      d.name,
+			Container: d.container,
+			Type:      d.etype,
+			Parent:    sc.sym,
+		})
+		b.symFolds = append(b.symFolds, sc.fold)
+		inner.sym = len(b.file.Symbols) - 1
+	}
+
+	// Members of a container are methods; anything nested in a function is not
+	inner.classCtx = ""
+	if dk.container || d.holds {
+		inner.classCtx = d.name
+		inner.selfCtx = d.name
+	} else if d.container != "" {
+		inner.selfCtx = d.container
+		inner.selfName = d.selfName
+	}
+
+	if n.EndPosition().Row-n.StartPosition().Row+1 >= minFoldLines {
+		f := b.newFold(n)
+		f.title = d.name
+		if d.container != "" {
+			f.title = d.container + "." + d.name
+		}
+		sc.fold.children = append(sc.fold.children, f)
+		inner.fold = f
+		if d.etype != "" {
+			b.symFolds[inner.sym] = f
+		}
+	}
+	return inner
+}
+
+// newFold builds the fold for a definition: its range (with wrappers such as
+// decorators and the doc comment above it) and the signature that stands in
+// for it in the parent chunk.
+func (b *builder) newFold(n *sitter.Node) *fold {
+	outer := n
+	for p := outer.Parent(); p != nil && b.spec.wrappers[p.Kind()]; p = outer.Parent() {
+		outer = p
+	}
+
+	first := outer
+	for prev := first.PrevNamedSibling(); prev != nil && b.spec.leading[prev.Kind()]; prev = first.PrevNamedSibling() {
+		// Some grammars include the line break in a comment node
+		end := prev.EndPosition()
+		if end.Column > 0 {
+			end.Row++
+		}
+		if end.Row != first.StartPosition().Row || !b.startsLine(prev) {
+			break
+		}
+		first = prev
+	}
+
+	start := first.StartByte()
+	if b.startsLine(first) {
+		start = b.lineStart(start)
+	}
+
+	sigStart := outer.StartByte()
+	var header string
+	if body := findBody(n, 2); body != nil && body.StartByte() > sigStart {
+		header = string(b.src[sigStart:body.StartByte()])
+	} else {
+		header, _, _ = strings.Cut(string(b.src[sigStart:outer.EndByte()]), "\n")
+	}
+
+	// Comments between the signature and the body belong to the body
+	header = strings.TrimRight(header, " \t\r\n")
+	for {
+		i := strings.LastIndexByte(header, '\n')
+		if i < 0 || !strings.HasPrefix(strings.TrimSpace(header[i+1:]), b.spec.comment) {
+			break
+		}
+		header = strings.TrimRight(header[:i], " \t\r\n")
+	}
+
+	return &fold{
+		node:     n,
+		start:    start,
+		end:      outer.EndByte(),
+		startRow: first.StartPosition().Row,
+		endRow:   outer.EndPosition().Row,
+		indent:   string(b.src[b.lineStart(sigStart):sigStart]),
+		header:   header,
+	}
+}
+
+func (b *builder) lineStart(offset uint) uint {
+	for offset > 0 && b.src[offset-1] != '\n' {
+		offset--
+	}
+	return offset
+}
+
+// startsLine reports whether only whitespace precedes the node on its line
+func (b *builder) startsLine(n *sitter.Node) bool {
+	start := n.StartByte()
+	return strings.TrimSpace(string(b.src[b.lineStart(start):start])) == ""
+}
+
+// findBody returns the body of a definition, looking through wrapping nodes
+// such as `const f = () => {...}`
+func findBody(n *sitter.Node, depth int) *sitter.Node {
+	if body := n.ChildByFieldName("body"); body != nil {
+		return body
+	}
+	if depth == 0 {
+		return nil
+	}
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		if body := findBody(n.NamedChild(i), depth-1); body != nil {
+			return body
+		}
+	}
+	return nil
+}
+
+// Fields that hold the name and the receiver of a member access, across grammars
+var (
+	memberNameFields = []string{"field", "attribute", "property", "name", "method"}
+	receiverFields   = []string{"operand", "object", "value", "argument", "path", "scope", "receiver"}
+)
+
+func firstField(n *sitter.Node, fields []string) *sitter.Node {
+	for _, f := range fields {
+		if c := n.ChildByFieldName(f); c != nil {
+			return c
+		}
+	}
+	return nil
+}
+
+// call records a call expression. field names the child holding the callee;
+// when empty the call node itself carries the name and receiver.
+func (b *builder) call(n *sitter.Node, field string, sc scope) {
+	callee := n
+	if field != "" {
+		if callee = n.ChildByFieldName(field); callee == nil {
+			return
+		}
+		// foo::<T>() and similar wrap the callee once more
+		if inner := callee.ChildByFieldName("function"); inner != nil {
+			callee = inner
+		}
+	}
+
+	ref := Ref{Source: sc.sym, Relation: RelationCalls}
+	var receiver string
+	if field != "" && callee.NamedChildCount() == 0 {
+		ref.Name = b.text(callee)
+	} else {
+		nameNode := firstField(callee, memberNameFields)
+		if nameNode == nil || nameNode.NamedChildCount() > 0 {
+			return
+		}
+		ref.Name = b.text(nameNode)
+		if recv := firstField(callee, receiverFields); recv != nil {
+			ref.Member = true
+			if recv.NamedChildCount() == 0 {
+				receiver = b.text(recv)
+			}
+		}
+	}
+	if !isIdentifier(ref.Name) || (!ref.Member && b.spec.selfNames[ref.Name]) {
+		return
+	}
+	ref.External = ref.Name
+
+	switch {
+	case ref.Member && receiver != "" && (b.spec.selfNames[receiver] || receiver == sc.selfName):
+		ref.Container = sc.selfCtx
+	case ref.Member:
+		if imp, ok := b.imports[receiver]; ok {
+			ref.ImportBase = imp.base
+			if imp.symbol != "" {
+				ref.ImportBase = imp.symbol
+			}
+			ref.External = receiver + "." + ref.Name
+		} else {
+			// Type::new(), Class.method(); harmless when it is a variable
+			ref.Container = receiver
+		}
+	default:
+		if imp, ok := b.imports[ref.Name]; ok && imp.symbol != "" {
+			ref.Name = imp.symbol
+			ref.ImportBase = imp.base
+			ref.External = imp.path + "." + imp.symbol
+		} else if b.spec.builtins[ref.Name] {
+			// Only of interest when the project defines something by this name
+			ref.External = ""
+		} else if b.spec.implicitSelf {
+			ref.Container = sc.selfCtx
+		}
+	}
+	b.addRef(ref)
+}
+
+func isIdentifier(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	return !strings.ContainsAny(s, " \t\r\n(){}[]\"'`,;")
+}
+
+// render turns a fold into a chunk: its source with every child fold replaced
+// by a stub, followed by the chunks of the children.
+func (b *builder) render(f *fold, parent int) {
+	f.chunk = len(b.file.Chunks)
+	b.file.Chunks = append(b.file.Chunks, Chunk{})
+
+	content, folded := b.content(f)
+	if b.maxSize > 0 && len(content) > b.maxSize && f.node != nil && b.foldBlocks(f, len(content)) {
+		content, folded = b.content(f)
+	}
+
+	b.file.Chunks[f.chunk] = Chunk{
+		Content:     content,
+		Stub:        b.stub(f),
+		Title:       f.title,
+		StartLine:   int(f.startRow) + 1,
+		EndLine:     int(f.endRow) + 1,
+		StartOffset: int(f.start),
+		EndOffset:   int(f.end),
+		Parent:      parent,
+		Verbatim:    len(folded) == 0,
+	}
+
+	for _, c := range folded {
+		b.render(c, f.chunk)
+	}
+}
+
+// stub is the text that stands in for a fold in its parent
+func (b *builder) stub(f *fold) string {
+	return fmt.Sprintf("%s%s %s ... chunk: lines %d-%d%s", f.indent, f.header, b.spec.comment, f.startRow+1, f.endRow+1, b.spec.commentEnd)
+}
+
+// content returns the source of a fold with its children replaced by stubs,
+// and the children that were replaced
+func (b *builder) content(f *fold) (string, []*fold) {
+	var sb strings.Builder
+	var folded []*fold
+	cursor := f.start
+	for _, c := range f.children {
+		if c.start < cursor || c.end > f.end {
+			// Overlaps a sibling; leave it inline
+			b.inline(c, f.chunk)
+			continue
+		}
+		sb.Write(b.src[cursor:c.start])
+		sb.WriteString(b.stub(c))
+		cursor = c.end
+		folded = append(folded, c)
+	}
+	sb.Write(b.src[cursor:f.end])
+
+	content := sb.String()
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	return content, folded
+}
+
+// foldBlocks folds the largest statements inside an oversized fold, until its
+// content fits the size limit or nothing is left to fold. It reports whether
+// anything was folded.
+func (b *builder) foldBlocks(f *fold, size int) bool {
+	var blocks []*sitter.Node
+	b.collectBlocks(f.node, f, &blocks)
+	sort.SliceStable(blocks, func(i, j int) bool {
+		return blocks[i].EndByte()-blocks[i].StartByte() > blocks[j].EndByte()-blocks[j].StartByte()
+	})
+
+	changed := false
+	for _, n := range blocks {
+		if size <= b.maxSize {
+			break
+		}
+		header, _, _ := strings.Cut(b.text(n), "\n")
+		block := &fold{
+			node:     n,
+			title:    f.title,
+			start:    b.lineStart(n.StartByte()),
+			end:      n.EndByte(),
+			startRow: n.StartPosition().Row,
+			endRow:   n.EndPosition().Row,
+			indent:   string(b.src[b.lineStart(n.StartByte()):n.StartByte()]),
+			header:   strings.TrimRight(header, " \t\r"),
+		}
+
+		// Definitions inside the block move along with it
+		var rest []*fold
+		for _, c := range f.children {
+			if c.start >= block.start && c.end <= block.end {
+				block.children = append(block.children, c)
+				size += int(c.end-c.start) - len(b.stub(c))
+			} else {
+				rest = append(rest, c)
+			}
+		}
+		f.children = append(rest, block)
+		size -= int(block.end-block.start) - len(b.stub(block))
+		changed = true
+	}
+
+	sort.Slice(f.children, func(i, j int) bool { return f.children[i].start < f.children[j].start })
+	return changed
+}
+
+// collectBlocks finds the outermost nodes below n that can be folded: they
+// span several lines, start on a line of their own, and do not cut through an
+// existing fold.
+func (b *builder) collectBlocks(n *sitter.Node, f *fold, blocks *[]*sitter.Node) {
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		c := n.NamedChild(i)
+		startRow, endRow := c.StartPosition().Row, c.EndPosition().Row
+		if endRow-startRow+1 < minBlockLines {
+			continue
+		}
+		// A node that fills its parent, like the statement list of a body,
+		// would take everything with it
+		fills := startRow <= n.StartPosition().Row+1 && endRow+1 >= n.EndPosition().Row
+		if !fills && startRow > f.node.StartPosition().Row &&
+			b.startsLine(c) && !b.spec.leading[c.Kind()] && !b.cutsFold(c, f) {
+			*blocks = append(*blocks, c)
+			continue
+		}
+		b.collectBlocks(c, f, blocks)
+	}
+}
+
+// cutsFold reports whether a node is inside, or partly overlaps, a child fold
+func (b *builder) cutsFold(n *sitter.Node, f *fold) bool {
+	start, end := b.lineStart(n.StartByte()), n.EndByte()
+	for _, c := range f.children {
+		if start < c.end && end > c.start && !(start <= c.start && end >= c.end) {
+			return true
+		}
+		if start == c.start && end == c.end {
+			return true
+		}
+	}
+	return false
+}
+
+// inline assigns a fold and everything below it to an existing chunk
+func (b *builder) inline(f *fold, chunk int) {
+	f.chunk = chunk
+	for _, c := range f.children {
+		b.inline(c, chunk)
+	}
+}
+
+// Expand returns the content of a chunk with a child chunk shown in full in
+// place of its stub
+func Expand(content, stub, child string) string {
+	return strings.Replace(content, stub, strings.TrimSuffix(child, "\n"), 1)
+}

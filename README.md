@@ -9,7 +9,8 @@ Chainsaw indexes your code into a searchable knowledge graph with vector embeddi
 ## ✨ Features
 
 - **🔍 Semantic Search** - Find code by meaning, not just keywords
-- **📊 Knowledge Graph** - Query relations between functions, types, and packages
+- **🌳 Syntax-Aware Chunks** - Code is chunked along its syntax tree; results show the folded file with the hits expanded
+- **📊 Knowledge Graph** - Query relations between functions, types, and packages, read from the syntax tree
 - **🔄 Multi-Hop Queries** - Explore transitive relationships (e.g., `*1..3` for call chains)
 - **📈 Aggregation** - COUNT, GROUP BY, ORDER BY for code analytics
 - **🎯 Context-Aware** - Automatically scopes to current directory
@@ -120,20 +121,20 @@ chainsaw graph query "
        ▲
        │
 ┌──────┴──────┐
-│   Daemon    │  Background indexer + graph extractor
+│   Daemon    │  Background indexer: chunks, embeddings, graph
 └─────────────┘
        │
        ▼
 ┌─────────────┐
-│   Ollama    │  Embeddings + graph extraction (local)
+│   Ollama    │  Embeddings (local)
 └─────────────┘
 ```
 
 **Key components:**
 - **Database**: SQLite with `sqlite-vec` extension for vector similarity search
-- **Daemon**: Background worker that indexes files and extracts graph relations
+- **Daemon**: Background worker that indexes files and builds the graph from their syntax tree
 - **CLI**: Read-only query interface for search and graph queries
-- **LLM**: Ollama (local) or OpenRouter/OpenAI (cloud) for embeddings and graph extraction
+- **Embeddings**: Ollama (local)
 
 ## ⚙️ Configuration
 
@@ -157,12 +158,9 @@ profiles:
     embedding_model: "nomic-embed-text"
     chunk_size: 512
     overlap: 64
-    graph_driver:
-      model: "qwen2.5:3b"
-      batch_size: 100
 ```
 
-See [Manual](MANUAL.md#configuration) for advanced configuration including cloud LLM providers.
+See [Manual](MANUAL.md#configuration) for advanced configuration.
 
 ## 🛠️ Development
 
@@ -196,7 +194,7 @@ See [Developer Guide](DEVELOPER.md) for architecture details and contribution gu
 
 ## 📊 Performance
 
-- **Graph extraction**: ~30 seconds for 1000 chunks (batched)
+- **Graph**: read from the syntax tree while indexing, no LLM calls
 - **Search latency**: Sub-second semantic search
 - **Scalability**: Tested with 200+ files, 1000+ chunks
 

@@ -180,7 +180,7 @@ chainsaw daemon status     # Check daemon status
 The daemon:
 - Watches configured directories for changes
 - Indexes new/modified files
-- Extracts graph relations
+- Builds the graph from the syntax tree
 - Keeps embeddings up-to-date
 
 ### `chainsaw status`
@@ -208,6 +208,46 @@ Semantic search finds code by **meaning**, not just keywords. It uses vector emb
 ```bash
 chainsaw search "error handling patterns"
 ```
+
+### Semantic Chunks and Folded Results
+
+Files in a known syntax are not cut into fixed-size blocks but along their
+syntax tree. Every definition is a chunk of its own, and where it sits in the
+enclosing chunk only its signature remains, with a reference to the lines of
+the chunk that holds the body:
+
+```go
+package indexer
+
+func New(cfg *Config, database db.Database) *Indexer // ... chunk: lines 54-65
+
+func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error // ... chunk: lines 80-161
+```
+
+This repeats at every level: a file lists its classes, a class its methods, a
+method its nested functions. A chunk that is still too large to embed gets its
+biggest loops, branches and literals folded the same way; only what cannot be
+folded any further is split into blocks.
+
+How much of this a search result shows is set with `--expand`:
+
+```bash
+chainsaw search --expand body "error handling"   # Just the definition that matched
+chainsaw search --expand file "error handling"   # The folded file, with the matches in full
+chainsaw search --expand calls "error handling"  # Also what the matches call (default)
+chainsaw search --limit 3 "error handling"       # Match fewer chunks (default 10)
+```
+
+- `body` gives the whole definition, even when it had to be embedded in
+  several blocks. Nested definitions stay folded.
+- `file` shows where the match sits: all matches in one file are one result.
+- `calls` also shows in full the definitions the matches call. Those in the
+  same file are expanded in place; those in other files follow as related
+  chunks. Only `calls` edges are followed, not `may_call`.
+
+Supported: Go, Python, JavaScript, TypeScript/TSX, Rust, Java, C, C++ and
+Ruby. Markdown is folded along its sections; HTML and XML only where a chunk
+would be too large. Other files are split into overlapping blocks as before.
 
 ### Advanced Search Examples
 
@@ -281,28 +321,53 @@ MATCH (source:TYPE)-[relation]->(target)
 RETURN source.property, target.property
 ```
 
+### Where the Graph Comes From
+
+For the languages listed under [Semantic Chunks](#semantic-chunks-and-folded-results)
+the graph is read from the syntax tree: every definition is an entity, and
+every call and import in the source is an edge. No LLM is involved, and
+files in other languages are searchable but have no entities or edges.
+
+**Go** files are also run through the Go type checker, so every call has
+its exact target: the function or method it refers to, in the file that
+declares it, whatever variable, field or package it is reached through. A
+call of an interface method is a `calls` edge to that method of the
+interface, plus a `may_call` edge to the method of each type that implements
+the interface, and each such type has an `implements` edge to the interface.
+Calls of function values (callbacks, closures in variables) have no target
+and are left out. The type checker looks at the types in the package and
+what it imports, so an implementation that is only wired in elsewhere is
+found through `implements`, not through `may_call`. Dependencies are located
+with the `go` command; if it is not available, calls into them fall back to
+the rules below.
+
+For the **other languages** the syntax tree gives names, not types. An edge
+is `calls` when the target follows from the source itself: a function in the
+same directory, a name reached through an import, a method on `self`/`this`
+or on a named type. When only the name is known, as with a method call on a
+variable, the edge is `may_call` and goes to every definition in the project
+with that name.
+
 ### Entity Types
 
 Supported entity types:
-- `FUNCTION` - Functions and top-level functions
-- `METHOD` - Methods on structs/classes
-- `TYPE` - Type definitions
-- `INTERFACE` - Interface definitions
+- `FUNCTION` - Functions
+- `METHOD` - Methods; named `Type.method`
+- `CLASS` - Classes and modules
 - `STRUCT` - Struct definitions
-- `PACKAGE` - Package/module imports
-- `VARIABLE` - Variables
-- `CONSTANT` - Constants
+- `INTERFACE` - Interfaces and traits
+- `TYPE` - Other type definitions
+- `PACKAGE` - A source file's package or module, and imported packages
+- `EXTERNAL` - Something that is called but not defined in the index, such as `fmt.Println`
 
 ### Relation Types
 
 Supported relationships:
-- `calls` - Function/method calls
-- `uses` - Uses/references
+- `calls` - Function/method calls with a known target
+- `may_call` - Calls that may end up there: dispatched through an interface (Go), or matched by name only
+- `implements` - A type implements an interface (Go)
 - `imports` - Package imports
-- `implements` - Interface implementations
-- `extends` - Type extensions/embedding
-- `defines` - Definitions
-- `has_field` - Struct field relationships
+- `defines` - A package defines its functions and types, a class its methods
 
 ### Query Examples
 
@@ -439,40 +504,13 @@ profiles:
     embedding_model: "nomic-embed-text"
     chunk_size: 512
     overlap: 64
-
-    # Graph extraction settings
-    graph_driver:
-      model: "qwen2.5:3b"
-      temperature: 0.1
-      concurrency: 5
-      batch_size: 100
 ```
+
+Older versions extracted the graph with an LLM. The settings for that
+(`graph_driver`, `llm_provider`, `llm_base_url`, `llm_api_key`) are ignored
+and can be removed.
 
 ### Advanced Configuration
-
-#### Using OpenRouter for Graph Extraction
-
-You can use cloud LLM providers like OpenRouter while keeping embeddings local:
-
-```yaml
-profiles:
-  default:
-    embedding_model: "nomic-embed-text"  # Local Ollama
-
-    # Cloud LLM for graph extraction
-    llm_provider: "openai"
-    llm_base_url: "https://openrouter.ai/api/v1"
-    llm_api_key: "${OPENROUTER_API_KEY}"
-
-    graph_driver:
-      model: "anthropic/claude-3.5-haiku"
-      batch_size: 100
-```
-
-Set your API key:
-```bash
-export OPENROUTER_API_KEY="sk-or-v1-..."
-```
 
 #### Multiple Profiles
 
@@ -485,15 +523,11 @@ profiles:
     include:
       - ~/work/projects
     embedding_model: "nomic-embed-text"
-    graph_driver:
-      model: "qwen2.5:7b"
 
   personal:
     include:
       - ~/personal/projects
     embedding_model: "nomic-embed-text"
-    graph_driver:
-      model: "anthropic/claude-3.5-haiku"
 ```
 
 Switch profiles by editing `active_profile` and restarting the daemon.
@@ -523,38 +557,15 @@ Local configs can only make filtering MORE restrictive (additive security).
 
 For large projects (1000+ files), consider:
 
-1. **Adjust batch size** for your LLM:
-   ```yaml
-   graph_driver:
-     batch_size: 150  # Increase for models with large context windows
-   ```
-
-2. **Monitor progress**:
+1. **Monitor progress**:
    ```bash
    watch -n 5 chainsaw status
    ```
 
-3. **Check daemon logs**:
+2. **Check daemon logs**:
    ```bash
    journalctl --user -u chainsawd -f
    ```
-
-### Graph Extraction Performance
-
-The graph worker processes chunks in batches for efficiency:
-- Default batch size: 100 chunks per LLM call
-- Typical processing: ~30 seconds for 1000 chunks
-- Configurable via `graph_driver.batch_size`
-
-### Custom LLM Models
-
-Use any Ollama-compatible model:
-
-```yaml
-graph_driver:
-  model: "deepseek-r1:7b"  # Or any model you've pulled
-  temperature: 0.0         # Lower for more deterministic extraction
-```
 
 ### Output Formats
 
@@ -616,24 +627,9 @@ chainsaw index .
 
 ### Slow Indexing
 
-Graph extraction can be slow on first run. Optimizations:
-
-1. **Use faster model**:
-   ```yaml
-   graph_driver:
-     model: "qwen2.5:3b"  # Smaller, faster
-   ```
-
-2. **Increase batch size**:
-   ```yaml
-   graph_driver:
-     batch_size: 150  # More chunks per call
-   ```
-
-3. **Check LLM performance**:
-   ```bash
-   ollama run qwen2.5:3b "test"  # Should respond quickly
-   ```
+Indexing time is spent on embeddings. Check that Ollama responds quickly, and
+exclude directories that are not worth searching (caches, build output,
+coverage reports).
 
 ### Permission Denied
 
@@ -655,4 +651,3 @@ chmod 600 ~/.chainsaw/chainsaw.db
 
 - Explore [Graph Queries](#graph-queries) for advanced code analysis
 - Configure [Multiple Profiles](#multiple-profiles) for different projects
-- Set up [OpenRouter](#using-openrouter-for-graph-extraction) for cloud LLM integration

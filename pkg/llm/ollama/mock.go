@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-
-	"github.com/wouteroostervld/chainsaw/pkg/llm"
 )
 
 // MockClient is a mock implementation of OllamaClient for testing
@@ -13,18 +11,16 @@ type MockClient struct {
 	mu sync.Mutex
 
 	// Configurable responses
-	EmbedFunc        func(ctx context.Context, model, text string) ([]float32, error)
-	EmbedBatchFunc   func(ctx context.Context, model string, texts []string) ([][]float32, error)
-	GenerateFunc     func(ctx context.Context, model, prompt, system string) (string, error)
-	ExtractEdgesFunc func(ctx context.Context, model, code string) ([]llm.Edge, error)
-	PingFunc         func(ctx context.Context) error
+	EmbedFunc      func(ctx context.Context, model, text string) ([]float32, error)
+	EmbedBatchFunc func(ctx context.Context, model string, texts []string) ([][]float32, error)
+	GenerateFunc   func(ctx context.Context, model, prompt, system string) (string, error)
+	PingFunc       func(ctx context.Context) error
 
 	// Call tracking
-	EmbedCalls        []EmbedCall
-	EmbedBatchCalls   []EmbedBatchCall
-	GenerateCalls     []GenerateCall
-	ExtractEdgesCalls []ExtractEdgesCall
-	PingCalls         int
+	EmbedCalls      []EmbedCall
+	EmbedBatchCalls []EmbedBatchCall
+	GenerateCalls   []GenerateCall
+	PingCalls       int
 }
 
 type EmbedCall struct {
@@ -41,11 +37,6 @@ type GenerateCall struct {
 	Model  string
 	Prompt string
 	System string
-}
-
-type ExtractEdgesCall struct {
-	Model string
-	Code  string
 }
 
 // NewMockClient creates a new mock client with default behaviors
@@ -76,11 +67,6 @@ func NewMockClient() *MockClient {
 		},
 		GenerateFunc: func(ctx context.Context, model, prompt, system string) (string, error) {
 			return "Generated response for: " + prompt, nil
-		},
-		ExtractEdgesFunc: func(ctx context.Context, model, code string) ([]llm.Edge, error) {
-			return []llm.Edge{
-				{Source: "funcA", Target: "funcB", RelationType: "calls"},
-			}, nil
 		},
 		PingFunc: func(ctx context.Context) error {
 			return nil
@@ -115,15 +101,6 @@ func (m *MockClient) Generate(ctx context.Context, model, prompt, system string)
 	return m.GenerateFunc(ctx, model, prompt, system)
 }
 
-// ExtractEdges implements OllamaClient
-func (m *MockClient) ExtractEdges(ctx context.Context, model, code string) ([]llm.Edge, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.ExtractEdgesCalls = append(m.ExtractEdgesCalls, ExtractEdgesCall{Model: model, Code: code})
-	return m.ExtractEdgesFunc(ctx, model, code)
-}
-
 // Ping implements OllamaClient
 func (m *MockClient) Ping(ctx context.Context) error {
 	m.mu.Lock()
@@ -141,7 +118,6 @@ func (m *MockClient) Reset() {
 	m.EmbedCalls = nil
 	m.EmbedBatchCalls = nil
 	m.GenerateCalls = nil
-	m.ExtractEdgesCalls = nil
 	m.PingCalls = 0
 }
 
@@ -155,9 +131,6 @@ func (m *MockClient) SetError(err error) {
 	}
 	m.GenerateFunc = func(ctx context.Context, model, prompt, system string) (string, error) {
 		return "", err
-	}
-	m.ExtractEdgesFunc = func(ctx context.Context, model, code string) ([]llm.Edge, error) {
-		return nil, err
 	}
 	m.PingFunc = func(ctx context.Context) error {
 		return err

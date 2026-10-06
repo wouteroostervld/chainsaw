@@ -41,19 +41,6 @@ profiles:
     chunk_size: 512
     overlap: 64
     
-    # --- Graph Extraction Settings ---
-    graph_driver:
-      model: "llama3"              # Ollama model for graph extraction
-      temperature: 0.1             # Low temp for deterministic output
-      concurrency: 2               # Parallel graph extractions
-      output_format: "json"        # Parse as JSON
-      
-      # Custom prompt for graph extraction
-      custom_system_prompt: |
-        Analyze the code snippet. Return a JSON object with a list of "edges".
-        Each edge must have: "source", "target", "relation", "weight" (0.0-1.0).
-        Focus on function calls, imports, and class relations.
-        Ignore generic keywords like "if", "else", "return".
 
   # Fast profile for note-taking
   notes_fast:
@@ -74,10 +61,3 @@ profiles:
     embedding_model: "all-minilm"
     chunk_size: 1024
     overlap: 128
-    
-    graph_driver:
-      model: "phi3:mini"
-      temperature: 0.2
-      concurrency: 4
-      output_format: "regex"
-      parsing_regex: '(?P<source>.+?)\s->\s(?P<relation>.+?)\s->\s(?P<target>.+)'

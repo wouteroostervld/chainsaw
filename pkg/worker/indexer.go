@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/wouteroostervld/chainsaw/pkg/db"
@@ -102,6 +103,20 @@ func (w *IndexWorker) processFile(ctx context.Context, file *db.File) {
 	}
 
 	slog.Debug("Processing file", "file", file.Path, "retry", file.RetryCount)
+
+	// A file that was deleted has nothing left to index
+	if _, err := os.Stat(file.Path); os.IsNotExist(err) {
+		if err := w.db.DeleteChunksForFile(file.ID); err != nil {
+			slog.Error("Failed to delete chunks of removed file", "file", file.Path, "error", err)
+			return
+		}
+		if err := w.db.DeleteFile(file.Path); err != nil {
+			slog.Error("Failed to delete removed file", "file", file.Path, "error", err)
+			return
+		}
+		slog.Info("Removed deleted file from index", "file", file.Path)
+		return
+	}
 
 	// Do the actual indexing
 	if err := w.indexer.IndexFile(ctx, file.Path); err != nil {

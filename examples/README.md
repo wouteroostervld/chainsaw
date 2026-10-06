@@ -161,7 +161,6 @@ cp /path/to/chainsaw/examples/SKILLS.md ./SKILLS.md
 
 - **chunk_size**: Smaller = more granular, larger = better context (default: 512)
 - **overlap**: Prevents splitting related content (default: 64)
-- **graph_driver.concurrency**: Balance CPU usage vs speed (default: 2)
 - **Resource limits**: Adjust in systemd service based on your system
 
 ## Troubleshooting

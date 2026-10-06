@@ -39,7 +39,7 @@ type Database interface {
 	GetChunksByIDs(chunkIDs []int64) ([]*ChunkWithPath, error)
 	DeleteChunksForFile(fileID int64) error
 	SearchSimilar(queryEmbedding []float32, limit int, pathFilter string) ([]*SearchResult, error)
-	SearchWithRelations(queryEmbedding []float32, limit int, maxDepth int, pathFilter string) ([]*SearchResult, error)
+	SearchWithRelations(queryEmbedding []float32, limit int, maxDepth int, pathFilter string, view SearchView) ([]*SearchResult, error)
 	GetChunkDistance(chunkA, chunkB int64) (float64, error)
 	CountChunks() (int64, error)
 
@@ -56,10 +56,11 @@ type Database interface {
 	GetEntitiesByType(entityType string) ([]*Entity, error)
 	FindRelatedEntities(entityID int64, relationType string) ([]*Entity, error)
 
-	// Graph extraction state tracking
-	GetChunksNeedingGraphExtraction(limit int) ([]int64, error)
-	MarkChunksGraphExtracted(chunkIDs []int64) error
-	GetGraphExtractionStats() (total, extracted, pending int, err error)
+	// Symbols parsed from source files (exact graph extraction)
+	StoreFileSymbols(fileID int64, root string, defs []SymbolDef, refs []SymbolRef) error
+
+	// Outline of parsed files: the tree of semantic chunks
+	StoreFileOutline(fileID int64, nodes []OutlineNode) error
 }
 
 // Ensure DB implements Database interface

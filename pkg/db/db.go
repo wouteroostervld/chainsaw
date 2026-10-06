@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
@@ -134,8 +135,18 @@ func (db *DB) initSchema(dbExists bool, cfg Config) error {
 		CreateGraphSourceIndex,
 		CreateGraphTargetIndex,
 		CreateGraphRelationIndex,
-		CreateChunkGraphStateTable,
-		CreateChunkGraphStateIndex,
+		CreateSymbolDefsTable,
+		CreateSymbolDefsNameIndex,
+		CreateSymbolDefsFileIndex,
+		CreateSymbolRefsTable,
+		CreateSymbolRefsNameIndex,
+		CreateSymbolRefsFileIndex,
+		CreateSymbolRefsResolvedIndex,
+		CreateSymbolDirtyTable,
+		CreateOutlineNodesTable,
+		CreateOutlineNodesFileIndex,
+		CreateChunkNodesTable,
+		CreateChunkNodesNodeIndex,
 	)
 
 	tx, err := db.conn.Begin()
@@ -181,6 +192,27 @@ func (db *DB) initSchema(dbExists bool, cfg Config) error {
 			}
 		}
 
+		// Migrate to 2.5.0 (graph built from the syntax tree)
+		if currentVersion < "2.5.0" {
+			if err := db.migrateToV2_5(tx); err != nil {
+				return fmt.Errorf("migration to 2.5.0 failed: %w", err)
+			}
+		}
+
+		// Migrate to 2.6.0 (no more LLM graph extraction)
+		if currentVersion < "2.6.0" {
+			if err := db.migrateToV2_6(tx); err != nil {
+				return fmt.Errorf("migration to 2.6.0 failed: %w", err)
+			}
+		}
+
+		// Migrate to 2.7.0 (embeddings carry context and a task prefix)
+		if currentVersion < "2.7.0" {
+			if err := db.requeueAll(tx); err != nil {
+				return fmt.Errorf("migration to 2.7.0 failed: %w", err)
+			}
+		}
+
 		// Validate embedding dimension
 		var storedDim string
 		err = tx.QueryRow("SELECT value FROM meta WHERE key = ?", MetaKeyEmbeddingDim).Scan(&storedDim)
@@ -196,6 +228,75 @@ func (db *DB) initSchema(dbExists bool, cfg Config) error {
 		return fmt.Errorf("failed to commit schema transaction: %w", err)
 	}
 
+	return nil
+}
+
+// migrateToV2_5 makes the relation type part of the graph edge key, so two
+// entities can be related in more than one way, and queues every file for
+// re-indexing: chunks are now cut along the syntax tree and the graph is
+// built from it, which replaces what older versions stored.
+func (db *DB) migrateToV2_5(tx *sql.Tx) error {
+	var ddl string
+	err := tx.QueryRow("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'graph_edges'").Scan(&ddl)
+	if err != nil {
+		return fmt.Errorf("failed to read graph_edges schema: %w", err)
+	}
+
+	if !strings.Contains(ddl, "relation_type, chunk_id)") {
+		stmts := []string{
+			"ALTER TABLE graph_edges RENAME TO graph_edges_old",
+			CreateGraphEdgesTable,
+			`INSERT OR IGNORE INTO graph_edges (source_entity_id, target_entity_id, relation_type, chunk_id, weight)
+			 SELECT source_entity_id, target_entity_id, relation_type, chunk_id, weight FROM graph_edges_old`,
+			"DROP TABLE graph_edges_old",
+			CreateGraphSourceIndex,
+			CreateGraphTargetIndex,
+			CreateGraphRelationIndex,
+		}
+		for _, stmt := range stmts {
+			if _, err := tx.Exec(stmt); err != nil {
+				return fmt.Errorf("failed to rebuild graph_edges: %w", err)
+			}
+		}
+	}
+
+	return db.requeueAll(tx)
+}
+
+// requeueAll queues every file for re-indexing, for when what is stored for
+// a file changes shape, and records the current schema version
+func (db *DB) requeueAll(tx *sql.Tx) error {
+	if _, err := tx.Exec("UPDATE files SET status = 'pending', queued_at = CURRENT_TIMESTAMP, retry_count = 0"); err != nil {
+		return fmt.Errorf("failed to queue files for re-indexing: %w", err)
+	}
+
+	_, err := tx.Exec("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", MetaKeySchemaVersion, SchemaVersion)
+	if err != nil {
+		return fmt.Errorf("failed to update schema version: %w", err)
+	}
+	return nil
+}
+
+// migrateToV2_6 removes what LLM graph extraction left behind: its per-chunk
+// state, and the entities it made up. Every entity that remains is either a
+// definition found by parsing or a placeholder for something outside the index.
+func (db *DB) migrateToV2_6(tx *sql.Tx) error {
+	const extracted = "(SELECT id FROM entities WHERE chunk_id != 0 AND id NOT IN (SELECT entity_id FROM symbol_defs))"
+	stmts := []string{
+		"DROP TABLE IF EXISTS chunk_graph_state",
+		"DELETE FROM graph_edges WHERE source_entity_id IN " + extracted + " OR target_entity_id IN " + extracted,
+		"DELETE FROM entities WHERE chunk_id != 0 AND id NOT IN (SELECT entity_id FROM symbol_defs)",
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("failed to remove extracted graph: %w", err)
+		}
+	}
+
+	_, err := tx.Exec("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", MetaKeySchemaVersion, SchemaVersion)
+	if err != nil {
+		return fmt.Errorf("failed to update schema version: %w", err)
+	}
 	return nil
 }
 

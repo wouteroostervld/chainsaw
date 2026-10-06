@@ -72,8 +72,7 @@ func (db *DB) UpsertEntityEdge(sourceID, targetID int64, relationType string, ch
 	_, err := db.conn.Exec(`
 		INSERT INTO graph_edges (source_entity_id, target_entity_id, relation_type, chunk_id, weight)
 		VALUES (?, ?, ?, ?, 1.0)
-		ON CONFLICT(source_entity_id, target_entity_id, chunk_id) DO UPDATE SET
-			relation_type = excluded.relation_type,
+		ON CONFLICT(source_entity_id, target_entity_id, relation_type, chunk_id) DO UPDATE SET
 			weight = excluded.weight
 	`, sourceID, targetID, relationType, chunkID)
 

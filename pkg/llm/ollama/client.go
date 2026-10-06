@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/wouteroostervld/chainsaw/pkg/llm"
 )
 
 // Config for Ollama client
@@ -160,74 +158,6 @@ func (c *Client) generateOpenAIFormat(ctx context.Context, model, prompt, system
 	}
 
 	return resp.Choices[0].Message.Content, nil
-}
-
-// ExtractEdges extracts knowledge graph edges using structured output
-func (c *Client) ExtractEdges(ctx context.Context, model, code string) ([]llm.Edge, error) {
-	schema := map[string]interface{}{
-		"type": "array",
-		"items": map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"source":        map[string]string{"type": "string"},
-				"source_type":   map[string]string{"type": "string"},
-				"target":        map[string]string{"type": "string"},
-				"target_type":   map[string]string{"type": "string"},
-				"relation_type": map[string]string{"type": "string"},
-			},
-			"required": []string{"source", "target", "relation_type"},
-		},
-	}
-
-	prompt := fmt.Sprintf(`Extract code relations. Entity types: FUNCTION, METHOD, TYPE, INTERFACE, STRUCT, VARIABLE, PACKAGE, TEST. Relations: calls, imports, implements, extends, uses, tests, defines, references, creates, returns.
-
-Example:
-func NewClient(cfg *Config) *Client { return &Client{config: cfg} }
-
-Output:
-[
-  {"source": "NewClient", "source_type": "FUNCTION", "target": "Config", "target_type": "TYPE", "relation_type": "uses"},
-  {"source": "NewClient", "source_type": "FUNCTION", "target": "Client", "target_type": "TYPE", "relation_type": "creates"}
-]
-
-Code:
-%s`, code)
-
-	response, err := c.GenerateWithFormat(ctx, model, prompt, "You are a code relation extractor. Return only valid JSON.", schema)
-	if err != nil {
-		return nil, err
-	}
-
-	var edges []llm.Edge
-	if err := json.Unmarshal([]byte(response), &edges); err != nil {
-		return nil, fmt.Errorf("parse error: %w", err)
-	}
-
-	return edges, nil
-}
-
-// ExtractEdgesBatch extracts edges from multiple chunks in a single API call
-func (c *Client) ExtractEdgesBatch(ctx context.Context, model string, chunks []llm.ChunkInput) ([]llm.EdgeWithMetadata, error) {
-	// Build markdown prompt
-	prompt, chunkMapping := llm.BuildMarkdownPrompt(chunks)
-
-	// Note: Ollama doesn't support schema with JSONL well, so we just use plain text
-	response, err := c.GenerateWithFormat(ctx, model, prompt, "You are a code relation extractor. Return only JSONL format (one JSON object per line).", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse JSONL response
-	edges, err := llm.ParseJSONL(response, chunkMapping)
-	if err != nil {
-		// Log the error but return partial results if we got some edges
-		if len(edges) > 0 {
-			return edges, fmt.Errorf("partial parse: %w", err)
-		}
-		return nil, fmt.Errorf("parse JSONL: %w", err)
-	}
-
-	return edges, nil
 }
 
 // Ping checks connectivity

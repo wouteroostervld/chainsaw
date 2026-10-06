@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wouteroostervld/chainsaw/pkg/chunker"
 	"github.com/wouteroostervld/chainsaw/pkg/db"
+	"github.com/wouteroostervld/chainsaw/pkg/gotypes"
 	"github.com/wouteroostervld/chainsaw/pkg/llm"
 )
 
@@ -56,23 +58,10 @@ func New(cfg *Config, database db.Database, embeddingProvider llm.EmbeddingProvi
 		cfg = DefaultConfig()
 	}
 	return &Indexer{
-		config:      cfg,
-		db:          database,
-		ollama:      embeddingProvider,
-		graphClient: embeddingProvider.(llm.GraphExtractor), // Default to same client
-	}
-}
-
-// NewWithSeparateClients creates an indexer with separate clients for embeddings and graph extraction
-func NewWithSeparateClients(cfg *Config, database db.Database, embeddingProvider llm.EmbeddingProvider, graphExtractor llm.GraphExtractor) *Indexer {
-	if cfg == nil {
-		cfg = DefaultConfig()
-	}
-	return &Indexer{
-		config:      cfg,
-		db:          database,
-		ollama:      embeddingProvider,
-		graphClient: graphExtractor,
+		config:  cfg,
+		db:      database,
+		ollama:  embeddingProvider,
+		goTypes: gotypes.NewResolver(),
 	}
 }
 
@@ -112,7 +101,7 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 	}
 
 	slog.Info("About to chunk file", "file", filePath, "size", len(content))
-	chunks := idx.chunkContent(string(content), fileID, filePath)
+	chunks, parsed, chunkIndex := idx.chunkFile(content, fileID, filePath)
 	slog.Info("Chunking complete", "file", filePath, "chunk_count", len(chunks))
 
 	// Skip processing if file is empty or produces no chunks
@@ -123,23 +112,203 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 
 	slog.Debug("Generated chunks for file", "file", filePath, "count", len(chunks))
 
+	chunkIDs := make([]int64, 0, len(chunks))
 	for i := 0; i < len(chunks); i += idx.config.BatchSize {
 		end := min(i+idx.config.BatchSize, len(chunks))
 		batch := chunks[i:end]
 
-		if err := idx.processBatch(ctx, batch, fileID); err != nil {
+		ids, err := idx.processBatch(ctx, batch, fileID)
+		if err != nil {
 			return fmt.Errorf("failed to process batch: %w", err)
 		}
+		chunkIDs = append(chunkIDs, ids...)
+	}
 
-		// Rate limit embedding requests to avoid overwhelming Ollama
-		if end < len(chunks) {
-			time.Sleep(2 * time.Second)
+	// Files that could be parsed get their graph from the syntax tree; other
+	// files, and documents, have none
+	if parsed != nil {
+		if err := idx.storeOutline(fileID, parsed, chunkIndex, chunkIDs); err != nil {
+			return fmt.Errorf("failed to store outline: %w", err)
+		}
+		if !parsed.Markup {
+			if err := idx.storeSymbols(fileID, filePath, parsed, chunkIndex, chunkIDs); err != nil {
+				return fmt.Errorf("failed to store symbols: %w", err)
+			}
 		}
 	}
 
-	// Graph extraction is now handled by a separate worker
-	// Don't call BuildGraphFromCooccurrence here - it would re-process all chunks
+	return nil
+}
 
+// chunkFile splits a file into chunks. Source files in a known language are
+// split along their syntax tree; the parse result is returned along with, for
+// each of its chunks, the index of the first chunk stored for it (-1 if none).
+// Other files are split into overlapping blocks.
+func (idx *Indexer) chunkFile(content []byte, fileID int64, filePath string) ([]Chunk, *chunker.File, []int) {
+	if idx.config.SemanticChunking {
+		if parsed, ok := chunker.Parse(filePath, content, idx.config.MaxChunkSize); ok {
+			chunks, chunkIndex := idx.semanticChunks(parsed, fileID, filePath)
+			if len(chunks) > 0 {
+				if parsed.Language == "go" && idx.config.GoTypes && idx.goTypes != nil {
+					// Without it the calls stay as the syntax tree gives them
+					if err := idx.goTypes.Apply(parsed, filePath); err != nil {
+						slog.Debug("Go type check failed", "file", filePath, "error", err)
+					}
+				}
+				return chunks, parsed, chunkIndex
+			}
+		}
+	}
+	chunks := idx.chunkContent(string(content), fileID, filePath)
+	for i := range chunks {
+		chunks[i].Context = displayPath(filePath)
+	}
+	return chunks, nil, nil
+}
+
+// displayPath returns a file's path within its project
+func displayPath(filePath string) string {
+	if root := projectRoot(filePath); root != "" {
+		if rel, err := filepath.Rel(filepath.Dir(root), filePath); err == nil {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return filepath.Join(filepath.Base(filepath.Dir(filePath)), filepath.Base(filePath))
+}
+
+// semanticChunks converts the chunks of a parsed file. A chunk that is still
+// too large after folding its nested definitions is split into blocks.
+func (idx *Indexer) semanticChunks(parsed *chunker.File, fileID int64, filePath string) ([]Chunk, []int) {
+	var chunks []Chunk
+	chunkIndex := make([]int, len(parsed.Chunks))
+	path := displayPath(filePath)
+
+	for i, c := range parsed.Chunks {
+		context := path
+		if c.Title != "" {
+			context = path + ": " + c.Title
+		}
+		chunkIndex[i] = -1
+		if len(c.Content) < idx.config.MinChunkSize {
+			continue
+		}
+		chunkIndex[i] = len(chunks)
+
+		if len(c.Content) <= idx.config.MaxChunkSize {
+			chunks = append(chunks, Chunk{
+				FileID:      fileID,
+				FilePath:    filePath,
+				Content:     c.Content,
+				StartOffset: c.StartOffset,
+				EndOffset:   c.EndOffset,
+				StartLine:   c.StartLine,
+				EndLine:     c.EndLine,
+				Context:     context,
+			})
+			continue
+		}
+
+		for _, block := range idx.chunkContent(c.Content, fileID, filePath) {
+			block.Context = context
+			if c.Verbatim {
+				block.StartOffset += c.StartOffset
+				block.EndOffset += c.StartOffset
+				block.StartLine += c.StartLine - 1
+				block.EndLine += c.StartLine - 1
+			} else {
+				// Folded content no longer lines up with the file
+				block.StartOffset, block.EndOffset = c.StartOffset, c.EndOffset
+				block.StartLine, block.EndLine = c.StartLine, c.EndLine
+			}
+			chunks = append(chunks, block)
+		}
+		if chunkIndex[i] == len(chunks) {
+			chunkIndex[i] = -1
+		}
+	}
+
+	return chunks, chunkIndex
+}
+
+// storeOutline stores the tree of semantic chunks, so a search hit can be
+// served in the context of the folded file
+func (idx *Indexer) storeOutline(fileID int64, parsed *chunker.File, chunkIndex []int, chunkIDs []int64) error {
+	nodes := make([]db.OutlineNode, len(parsed.Chunks))
+	for i, c := range parsed.Chunks {
+		nodes[i] = db.OutlineNode{
+			Parent:    c.Parent,
+			StartLine: c.StartLine,
+			EndLine:   c.EndLine,
+			Content:   c.Content,
+			Stub:      c.Stub,
+		}
+		if chunkIndex[i] < 0 {
+			continue
+		}
+		// A node's chunks run up to the first chunk of the next stored node
+		end := len(chunkIDs)
+		for _, next := range chunkIndex[i+1:] {
+			if next >= 0 {
+				end = next
+				break
+			}
+		}
+		nodes[i].ChunkIDs = chunkIDs[chunkIndex[i]:end]
+	}
+	return idx.db.StoreFileOutline(fileID, nodes)
+}
+
+// storeSymbols stores the definitions, calls and imports of a parsed file as
+// graph entities and edges
+func (idx *Indexer) storeSymbols(fileID int64, filePath string, parsed *chunker.File, chunkIndex []int, chunkIDs []int64) error {
+	// A symbol lives in the chunk of its definition, or the nearest enclosing
+	// chunk that was stored
+	chunkID := func(i int) int64 {
+		for ; i >= 0; i = parsed.Chunks[i].Parent {
+			if chunkIndex[i] >= 0 {
+				return chunkIDs[chunkIndex[i]]
+			}
+		}
+		return chunkIDs[0]
+	}
+
+	// The module comes first; it defines everything at file level and is the
+	// source of imports and of calls outside any definition
+	defs := make([]db.SymbolDef, 0, len(parsed.Symbols)+1)
+	defs = append(defs, db.SymbolDef{
+		Name:       parsed.Module,
+		EntityType: chunker.TypePackage,
+		ChunkID:    chunkID(0),
+		Parent:     -1,
+	})
+	for _, sym := range parsed.Symbols {
+		defs = append(defs, db.SymbolDef{
+			Name:       sym.Name,
+			Container:  sym.Container,
+			EntityType: sym.Type,
+			ChunkID:    chunkID(sym.Chunk),
+			Parent:     sym.Parent + 1,
+		})
+	}
+
+	refs := make([]db.SymbolRef, 0, len(parsed.Refs))
+	for _, ref := range parsed.Refs {
+		refs = append(refs, db.SymbolRef{
+			Source:       ref.Source + 1,
+			RelationType: ref.Relation,
+			Name:         ref.Name,
+			Container:    ref.Container,
+			ImportBase:   ref.ImportBase,
+			TargetPath:   ref.TargetPath,
+			ExternalName: ref.External,
+			Member:       ref.Member,
+		})
+	}
+
+	if err := idx.db.StoreFileSymbols(fileID, projectRoot(filePath), defs, refs); err != nil {
+		return err
+	}
+	slog.Debug("Stored symbols", "file_id", fileID, "definitions", len(defs), "references", len(refs))
 	return nil
 }
 
@@ -272,6 +441,22 @@ func (idx *Indexer) chunkContent(content string, fileID int64, filePath string) 
 	return chunks
 }
 
+// projectRoot returns the directory of the repository a file belongs to, or
+// an empty string when it is not in one
+func projectRoot(filePath string) string {
+	dir := filepath.Dir(filePath)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
 // countLines counts the number of newlines in a byte slice
 func countLines(data []byte) int {
 	count := 0
@@ -283,18 +468,19 @@ func countLines(data []byte) int {
 	return count
 }
 
-// processBatch generates embeddings and optionally extracts edges for a batch of chunks
-func (idx *Indexer) processBatch(ctx context.Context, chunks []Chunk, fileID int64) error {
+// processBatch generates embeddings for a batch of chunks and stores them
+// It returns the IDs of the inserted chunks, in order
+func (idx *Indexer) processBatch(ctx context.Context, chunks []Chunk, fileID int64) ([]int64, error) {
 	texts := make([]string, len(chunks))
 	for i, chunk := range chunks {
-		texts[i] = chunk.Content
+		texts[i] = llm.DocumentText(idx.config.EmbedModel, chunk.embedText())
 	}
 
 	slog.Debug("Generating embeddings", "chunks", len(chunks))
 	embeddings, err := idx.ollama.Embed(ctx, idx.config.EmbedModel, texts, 5)
 	if err != nil {
 		slog.Error("Failed to generate embeddings", "error", err)
-		return fmt.Errorf("failed to generate embeddings: %w", err)
+		return nil, fmt.Errorf("failed to generate embeddings: %w", err)
 	}
 	slog.Debug("Embeddings generated", "count", len(embeddings))
 
@@ -303,14 +489,14 @@ func (idx *Indexer) processBatch(ctx context.Context, chunks []Chunk, fileID int
 		chunkID, err := idx.db.InsertChunk(chunk.FileID, chunk.Content, embeddings[i], chunk.StartLine, chunk.EndLine)
 		if err != nil {
 			slog.Error("Failed to insert chunk", "error", err, "chunk_index", i)
-			return fmt.Errorf("failed to insert chunk: %w", err)
+			return nil, fmt.Errorf("failed to insert chunk: %w", err)
 		}
 		chunkIDs = append(chunkIDs, chunkID)
 		slog.Debug("Inserted chunk", "chunk_id", chunkID, "file_id", chunk.FileID, "start_line", chunk.StartLine)
 	}
 	slog.Debug("Inserted chunks", "count", len(chunkIDs))
 
-	return nil
+	return chunkIDs, nil
 }
 
 func min(a, b int) int {
@@ -325,11 +511,4 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
-}
-
-// extractGraphEdges builds a symbol→chunkID map and creates cross-chunk edges
-// extractGraphEdges is deprecated - use BuildGraphFromCooccurrence instead
-func (idx *Indexer) extractGraphEdges(ctx context.Context, chunks []Chunk, chunkIDs []int64) error {
-	// Legacy function - no longer used with entity-based graph
-	return nil
 }
