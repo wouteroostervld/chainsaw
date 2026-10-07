@@ -11,21 +11,23 @@ type MockDatabase struct {
 	db.Database
 
 	UpsertFileCount   int
-	InsertChunkCount  int
 	DeleteChunksCount int
-	HasChangedResult  bool
 
-	Chunks          []*db.Chunk
-	Outline         []db.OutlineNode
-	SymbolDefs      []db.SymbolDef
-	SymbolRefs      []db.SymbolRef
-	StoreSymbolsErr error
+	Chunks     []MockChunk
+	SymbolDefs []db.SymbolDef
+	SymbolRefs []db.SymbolRef
+}
+
+// MockChunk is a chunk the indexer stored
+type MockChunk struct {
+	ID        int64
+	Content   string
+	StartLine int
+	EndLine   int
 }
 
 func NewMockDatabase() *MockDatabase {
-	return &MockDatabase{
-		HasChangedResult: true, // Default to file changed
-	}
+	return &MockDatabase{}
 }
 
 func (m *MockDatabase) UpsertFile(path string, modTime int64, contentHash string) (int64, error) {
@@ -33,20 +35,9 @@ func (m *MockDatabase) UpsertFile(path string, modTime int64, contentHash string
 	return 1, nil
 }
 
-func (m *MockDatabase) HasFileChanged(path string, modTime int64, contentHash string) (bool, error) {
-	return m.HasChangedResult, nil
-}
-
-func (m *MockDatabase) InsertChunk(fileID int64, contentSnippet string, embedding []float32, startLine, endLine int) (int64, error) {
-	m.InsertChunkCount++
-	id := int64(m.InsertChunkCount)
-	m.Chunks = append(m.Chunks, &db.Chunk{
-		ChunkID:        id,
-		FileID:         fileID,
-		ContentSnippet: contentSnippet,
-		StartLine:      startLine,
-		EndLine:        endLine,
-	})
+func (m *MockDatabase) InsertChunk(fileID int64, contentSnippet string, startLine, endLine int) (int64, error) {
+	id := int64(len(m.Chunks) + 1)
+	m.Chunks = append(m.Chunks, MockChunk{ID: id, Content: contentSnippet, StartLine: startLine, EndLine: endLine})
 	return id, nil
 }
 
@@ -58,10 +49,5 @@ func (m *MockDatabase) DeleteChunksForFile(fileID int64) error {
 func (m *MockDatabase) StoreFileSymbols(fileID int64, root string, defs []db.SymbolDef, refs []db.SymbolRef) error {
 	m.SymbolDefs = append(m.SymbolDefs, defs...)
 	m.SymbolRefs = append(m.SymbolRefs, refs...)
-	return m.StoreSymbolsErr
-}
-
-func (m *MockDatabase) StoreFileOutline(fileID int64, nodes []db.OutlineNode) error {
-	m.Outline = append(m.Outline, nodes...)
 	return nil
 }

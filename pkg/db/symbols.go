@@ -34,6 +34,9 @@ const (
 type SymbolDef struct {
 	Name       string // Bare name, e.g. "IndexFile"
 	Container  string // Class or receiver type, e.g. "Indexer"
+	Signature  string // The definition up to its body
+	StartLine  int    // 1-indexed
+	EndLine    int    // 1-indexed, inclusive
 	EntityType string
 	ChunkID    int64 // Chunk holding the definition
 	Parent     int   // Index of the defining symbol in the same batch, -1 for none
@@ -88,9 +91,9 @@ func (db *DB) StoreFileSymbols(fileID int64, root string, defs []SymbolDef, refs
 		}
 
 		if _, err := tx.Exec(`
-			INSERT OR REPLACE INTO symbol_defs (entity_id, file_id, root, name, container)
-			VALUES (?, ?, ?, ?, ?)
-		`, entityIDs[i], fileID, root, def.Name, def.Container); err != nil {
+			INSERT OR REPLACE INTO symbol_defs (entity_id, file_id, root, name, container, signature, start_line, end_line)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, entityIDs[i], fileID, root, def.Name, def.Container, def.Signature, def.StartLine, def.EndLine); err != nil {
 			return fmt.Errorf("failed to insert symbol definition: %w", err)
 		}
 		if _, err := tx.Exec("INSERT OR IGNORE INTO symbol_dirty (name) VALUES (?)", def.Name); err != nil {
@@ -135,14 +138,12 @@ func (db *DB) StoreFileSymbols(fileID int64, root string, defs []SymbolDef, refs
 // file's chunks. References from other files to the removed definitions are
 // resolved again the next time symbols are stored.
 func deleteFileGraph(tx *sql.Tx, fileID int64) error {
-	const fileChunks = "(SELECT chunk_id FROM vec_chunks WHERE file_id = ?)"
+	const fileChunks = "(SELECT chunk_id FROM chunks WHERE file_id = ?)"
 
 	statements := []string{
 		"INSERT OR IGNORE INTO symbol_dirty (name) SELECT name FROM symbol_defs WHERE file_id = ?",
 		"DELETE FROM symbol_defs WHERE file_id = ?",
 		"DELETE FROM symbol_refs WHERE file_id = ?",
-		"DELETE FROM outline_nodes WHERE file_id = ?",
-		"DELETE FROM chunk_nodes WHERE chunk_id IN " + fileChunks,
 		"DELETE FROM graph_edges WHERE chunk_id IN " + fileChunks,
 		"DELETE FROM entities WHERE chunk_id IN " + fileChunks,
 	}

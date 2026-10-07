@@ -1,0 +1,159 @@
+package grep
+
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+)
+
+const goSource = `package store
+
+import "fmt"
+
+var defaultPath = "/tmp/store"
+
+// Store keeps things.
+type Store struct {
+	path string
+	open bool
+}
+
+// Opener opens stores.
+type Opener interface {
+	Open(path string) (*Store, error)
+}
+
+func Open(path string) (*Store, error) {
+	s := &Store{path: path}
+	fmt.Println("open", s.path)
+	return s, nil
+}
+
+func (s *Store) Close() error {
+	s.open = false
+	fmt.Println("close", s.path)
+	return nil
+}
+`
+
+func write(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// summary reduces results to "file: symbol (type) line,line"
+func summary(dir string, files []File) []string {
+	var out []string
+	for _, f := range files {
+		rel, _ := filepath.Rel(dir, f.Path)
+		for _, g := range f.Groups {
+			s := rel + ": " + g.Symbol + " (" + g.Type + ")"
+			for _, l := range g.Lines {
+				s += " " + string(rune('0'+l.Number/10)) + string(rune('0'+l.Number%10))
+			}
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func TestSearch_ReportsEnclosingDefinition(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, map[string]string{"store.go": goSource})
+
+	files, err := Search(`path`, []string{dir}, Options{IgnoreCase: true})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	want := []string{
+		"store.go:  () 05",                   // Outside any definition
+		"store.go: Store (STRUCT) 09",        // A field
+		"store.go: Opener.Open (METHOD) 15",  // A method of an interface
+		"store.go: Open (FUNCTION) 18 19 20", // The signature counts
+		"store.go: Store.Close (METHOD) 26",  // Qualified by its receiver
+	}
+	if got := summary(dir, files); !reflect.DeepEqual(got, want) {
+		t.Errorf("got\n%q\nwant\n%q", got, want)
+	}
+
+	open := files[0].Groups[3]
+	if open.StartLine != 18 || open.EndLine != 22 || open.Lines[0].Text != "func Open(path string) (*Store, error) {" {
+		t.Errorf("Open group = %+v", open)
+	}
+}
+
+func TestSearch_PCRE(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, map[string]string{"store.go": goSource})
+
+	tests := []struct {
+		name    string
+		pattern string
+		opts    Options
+		want    []string
+	}{
+		{"lookbehind", `(?<=fmt\.)Println\("close"`, Options{}, []string{"store.go: Store.Close (METHOD) 26"}},
+		{"lookahead", `^func (?!\()`, Options{}, []string{"store.go: Open (FUNCTION) 18"}},
+		{"backreference", `(\w+): \1\b`, Options{}, []string{"store.go: Open (FUNCTION) 19"}},
+		{"ignore case", `STORE KEEPS`, Options{IgnoreCase: true}, []string{"store.go: Store (STRUCT) 07"}},
+		{"fixed string", `(*Store, error)`, Options{Fixed: true}, []string{"store.go: Opener.Open (METHOD) 15", "store.go: Open (FUNCTION) 18"}},
+		{"whole word", `open`, Options{Word: true}, []string{"store.go: Store (STRUCT) 10", "store.go: Open (FUNCTION) 20", "store.go: Store.Close (METHOD) 25"}},
+		{"end of line", `error \{$`, Options{}, []string{"store.go: Store.Close (METHOD) 24"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files, err := Search(tt.pattern, []string{dir}, tt.opts)
+			if err != nil {
+				t.Fatalf("Search failed: %v", err)
+			}
+			if got := summary(dir, files); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	if _, err := Search(`(unclosed`, []string{dir}, Options{}); err == nil {
+		t.Error("Search accepted an invalid pattern")
+	}
+}
+
+func TestSearch_WhichFiles(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, map[string]string{
+		"a.py":              "def f():\n    needle = 1\n    return needle\n",
+		"notes.txt":         "a needle in plain text\n",
+		"sub/b.py":          "needle = 2\n",
+		".hidden/c.py":      "needle = 3\n",
+		"node_modules/d.js": "var needle = 4;\n",
+		"vendor/e.go":       "package e // needle\n",
+		"data.bin":          "needle\x00binary",
+	})
+
+	files, err := Search(`needle`, []string{dir}, Options{Exclude: []string{"node_modules", "vendor/"}})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	want := []string{
+		"a.py: f (FUNCTION) 02 03",
+		"notes.txt:  () 01", // Text files are searched; they just have no definitions
+		"sub/b.py:  () 01",
+	}
+	if got := summary(dir, files); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+
+	// A file named explicitly is searched even inside an excluded directory
+	files, err = Search(`needle`, []string{filepath.Join(dir, "vendor", "e.go")}, Options{Exclude: []string{"vendor"}})
+	if err != nil || len(files) != 1 {
+		t.Errorf("explicit file: got %d files, err %v", len(files), err)
+	}
+}

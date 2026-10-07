@@ -10,11 +10,7 @@ func TestUpsertFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	db, err := Open(Config{
-		Path:         dbPath,
-		EmbeddingDim: 384,
-		SkipVecTable: true,
-	})
+	db, err := Open(Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -67,11 +63,7 @@ func TestGetFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	db, err := Open(Config{
-		Path:         dbPath,
-		EmbeddingDim: 384,
-		SkipVecTable: true,
-	})
+	db, err := Open(Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -125,11 +117,7 @@ func TestGetFileByID(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	db, err := Open(Config{
-		Path:         dbPath,
-		EmbeddingDim: 384,
-		SkipVecTable: true,
-	})
+	db, err := Open(Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -167,11 +155,7 @@ func TestDeleteFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	db, err := Open(Config{
-		Path:         dbPath,
-		EmbeddingDim: 384,
-		SkipVecTable: true,
-	})
+	db, err := Open(Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -209,11 +193,7 @@ func TestListFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	db, err := Open(Config{
-		Path:         dbPath,
-		EmbeddingDim: 384,
-		SkipVecTable: true,
-	})
+	db, err := Open(Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -270,11 +250,7 @@ func TestCountFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	db, err := Open(Config{
-		Path:         dbPath,
-		EmbeddingDim: 384,
-		SkipVecTable: true,
-	})
+	db, err := Open(Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -310,11 +286,7 @@ func TestHasFileChanged(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	db, err := Open(Config{
-		Path:         dbPath,
-		EmbeddingDim: 384,
-		SkipVecTable: true,
-	})
+	db, err := Open(Config{Path: dbPath})
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}

@@ -1,398 +1,122 @@
-# Chainsaw - Semantic Code Search and Knowledge Graph
+---
+name: chainsaw
+description: Structural code search for a local codebase. Use to grep with the enclosing function or type shown for every match, to see a file folded to its signatures before reading it, and to query the call graph (who calls X, what does X call, what implements an interface). Prefer it over plain grep and over reading whole files when locating code or planning a change that must cover every use.
+---
 
-## Description
+# Chainsaw
 
-Chainsaw is a GraphRAG-powered code search tool that indexes codebases into a searchable knowledge graph with vector embeddings. It enables semantic search (find code by meaning) and graph queries (explore relationships between functions, types, and packages).
+`chainsaw` looks at code through its syntax tree. Three commands, all
+read-only:
 
-**Key capabilities:**
-- Semantic search using natural language queries
-- Graph queries with Cypher-like syntax
-- Multi-hop relationship traversal
-- Aggregation queries (COUNT, GROUP BY, ORDER BY)
-- Context-aware filtering (scoped to current directory)
-- Background indexing daemon
+| Command | Answers | Needs the index |
+|---|---|---|
+| `chainsaw grep <pattern> [path...]` | Where is this text, and which definition is it inside? | No |
+| `chainsaw outline <file>` | What is in this file, without reading it? | No |
+| `chainsaw query '<cypher>'` | Who calls this? What does it call? What implements it? | Yes |
 
-## When to Use
+Run them from inside the project. Parsed languages: Go, Python, JavaScript,
+TypeScript, Rust, Java, C, C++, Ruby.
 
-Use Chainsaw when you need to:
-
-- **Find code by meaning, not keywords** - Search for "error handling patterns" instead of grepping for specific function names
-- **Explore code relationships** - Find what calls what, what implements what, package dependencies
-- **Analyze codebase structure** - Count most-called functions, find fan-out, visualize dependencies
-- **Navigate unfamiliar codebases** - Discover relevant code without knowing exact names or locations
-- **Answer architectural questions** - "What implements this interface?", "What are the call chains?"
-
-**Do NOT use** when:
-- You know the exact file/function name (use grep/find instead)
-- You need to modify code (Chainsaw is read-only)
-- Working with non-code files (images, binaries, etc.)
-
-## Prerequisites
+## grep: search, with the definition around each match
 
 ```bash
-# Install Ollama (for embeddings)
-curl https://ollama.ai/install.sh | sh
-
-# Pull embedding model
-ollama pull nomic-embed-text
-
-# Initialize database
-chainsaw init
-
-# Start daemon
-chainsaw daemon start
+chainsaw grep 'IS_EXT2_SB' fs/ext4        # matches grouped by enclosing definition
+chainsaw grep -s 'ctx\.Done\(\)'          # only the list of definitions, with counts
+chainsaw grep -i -w 'timeout' pkg         # -i ignore case, -w whole words, -F literal
 ```
 
-## Installation
+```
+fs/ext4/super.c
+  FUNCTION ext4_check_opt_consistency  (lines 2773-2853)
+    2781: if ((ctx->opt_flags & MOPT_NO_EXT2) && IS_EXT2_SB(sb)) {
+  FUNCTION _ext4_show_options  (lines 2960-3089)
+    3012: if (IS_EXT2_SB(sb))
+```
+
+Patterns are PCRE: lookaround, backreferences and `\b` work. The search is
+exhaustive and always current, so **use `grep -s` to enumerate every place
+before a change that must be complete** (renaming, removing a feature). The
+line ranges tell you what to read.
+
+## outline: a file folded to its signatures
 
 ```bash
-git clone https://github.com/wouteroostervld/chainsaw.git
-cd chainsaw
-make install
+chainsaw outline pkg/indexer/indexer.go
+chainsaw outline --expand Indexer.IndexFile pkg/indexer/indexer.go   # one definition in full
+chainsaw outline --symbols pkg/indexer/indexer.go                    # type, name, lines, signature
 ```
-
-## Basic Usage
-
-### 1. Index Your Codebase
-
-```bash
-# Index current directory
-cd /path/to/your/project
-chainsaw index .
-
-# Check status
-chainsaw status
-```
-
-The daemon processes files in the background, extracting:
-- Code chunks with semantic embeddings
-- Entity relations (function calls, imports, type definitions)
-- Knowledge graph structure
-
-### 2. Semantic Search
-
-Find code by **meaning**, not just keywords:
-
-```bash
-# Find error handling code
-chainsaw search "error handling patterns"
-
-# Find database queries
-chainsaw search "SQL database connection pooling"
-
-# Find authentication logic
-chainsaw search "user authentication and session management"
-
-# Find specific patterns
-chainsaw search "HTTP middleware with error handling"
-```
-
-**Context-aware:** Results are automatically filtered to the current directory and subdirectories.
-
-**Reading a result:** for source code (and Markdown) a result is the whole file, folded. The definitions that matched, and the ones they call in that file, are shown in full. Everything else is one line: its signature and where the body is.
 
 ```go
-func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error // ... chunk: lines 80-161
+func New(cfg *Config, database db.Database) *Indexer // ... chunk: lines 44-54
+func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error // ... chunk: lines 56-109
 ```
 
-The **Lines** in the result header are the hits. To see a folded body, read those lines of the file. Definitions called in other files are listed under *Related Chunks*.
+A folded line gives the signature and the lines of the body. Read those lines
+of the file when you need the body. **Outline a large file before reading
+it.**
 
-Choose how much comes back with `--expand`, and how many chunks are matched with `--limit`:
+## query: the call graph
 
 ```bash
-chainsaw search --expand body "..."    # Just the matching definition: smallest
-chainsaw search --expand file "..."    # Folded file with the matches in full
-chainsaw search --expand calls "..."   # Plus what the matches call, other files too (default)
-chainsaw search --limit 3 "..."
+# Who calls a function
+chainsaw query 'MATCH (f)-[:calls]->(t) WHERE t.name = "ext4_orphan_add" RETURN f.name, f.file, f.lines'
+
+# What a function calls, up to three levels deep
+chainsaw query 'MATCH (a {name: "handleIndex"})-[:calls*1..3]->(b) RETURN b.name, b.file, b.lines'
+
+# Everything that can reach a method, including through an interface
+chainsaw query 'MATCH (f)-[:calls|may_call]->(t) WHERE t.name ENDS WITH ".StoreFileSymbols" RETURN f.name, t.name'
+
+# What implements an interface
+chainsaw query 'MATCH (s)-[:implements]->(i {name: "Database"}) RETURN s.name, s.file'
+
+# Definitions by name or place
+chainsaw query 'MATCH (n:FUNCTION|METHOD) WHERE n.name =~ "^handle" RETURN n.signature, n.file, n.lines'
 ```
 
-Start with `body` or `file` when context is tight; use `calls` when you need to follow the code.
+- **Nodes** `(v:LABEL {name: "x"})`. Labels: `FUNCTION METHOD CLASS STRUCT
+  INTERFACE TYPE PACKAGE EXTERNAL`. Methods are named `Type.method`.
+  `EXTERNAL` is something called but not in the index (`fmt.Println`).
+- **Edges** `-[:calls]->`, `<-[:calls]-`, `-[:calls|may_call]->`,
+  `-[:calls*1..3]->`. Types: `calls`, `may_call`, `implements`, `imports`,
+  `defines`.
+- **Properties** `name type file line end_line lines signature snippet`.
+- **WHERE** `= <> < >`, `CONTAINS`, `STARTS WITH`, `ENDS WITH`, `=~`,
+  `IN [...]`, `IS NULL`, `AND OR NOT`.
+- **RETURN** `v`, `v.prop`, `count(v)`, `DISTINCT`; then `ORDER BY`, `LIMIT`.
 
-### 3. Graph Queries
+Results are limited to the current directory; add `--all` to lift that.
 
-Query code relationships using Cypher-like syntax:
+`calls` is certain. `may_call` means "may end up there": in Go, a call
+through an interface, to each implementing type; in other languages, a method
+call on a value of unknown type, to every definition with that name. In Go a
+call through an interface points at the interface's method
+(`Database.UpsertFile`), so to find the callers of an implementation ask for
+`[:calls|may_call]`.
+
+If a query returns nothing where you expect results, run `chainsaw status`;
+the project may need `chainsaw index .` (it takes seconds).
+
+## --expand: show the code
+
+Add to `grep` or `query` to see code instead of only locations:
 
 ```bash
-# Find function calls
-chainsaw graph query "MATCH (f:FUNCTION)-[:calls]->(t) RETURN f.name, t.name"
-
-# Find interface implementations
-chainsaw graph query "MATCH (i:INTERFACE)<-[:implements]-(s) RETURN i.name, s.name"
-
-# Multi-hop: Find call chains (up to 3 levels)
-chainsaw graph query "MATCH (a:FUNCTION)-[:calls*1..3]->(b) RETURN a.name, b.name"
-
-# Aggregation: Most-called functions
-chainsaw graph query "
-  MATCH (a)-[:calls]->(b)
-  RETURN b.name, COUNT(a) AS callers
-  GROUP BY b.name
-  ORDER BY callers DESC
-  LIMIT 10
-"
-
-# Get code snippets with file paths
-chainsaw graph query "
-  MATCH (f:FUNCTION)-[:calls]->(t)
-  RETURN f.name, t.name, t.snippet, t.file, t.lines
-"
+chainsaw grep --expand body 'SkipDir' cmd
+chainsaw query --expand body 'MATCH (f)-[:calls]->(t {name: "nearest"}) RETURN f'
 ```
 
-## Advanced Usage
-
-### Entity Types
-
-- `FUNCTION` - Functions
-- `METHOD` - Methods; named `Type.method`
-- `CLASS` - Classes and modules
-- `STRUCT` - Struct definitions
-- `INTERFACE` - Interfaces and traits
-- `TYPE` - Other type definitions
-- `PACKAGE` - A source file's package or module, and imported packages
-- `EXTERNAL` - Called but not defined in the index (e.g. `fmt.Println`)
-
-### Relation Types
-
-- `calls` - Function/method calls with a known target
-- `may_call` - Calls that may end up there. In Go: a call through an interface, to the method of each implementing type. In other languages: a method call on a value of unknown type, to every definition with that name
-- `implements` - A type implements an interface (Go)
-- `imports` - Package imports
-- `defines` - A package defines its functions and types, a class its methods
-
-Edges come from the syntax tree, and for Go from the type checker, not from an LLM. In Go `calls` is exact: a call through an interface points at the interface's method (`Database.UpsertFile`), so to find the callers of an implementation query both `calls` and `may_call`.
-
-### Multi-Hop Queries
-
-Use `*min..max` syntax for recursive traversal:
-
-```bash
-# Exactly 2 hops
-chainsaw graph query "MATCH (a)-[:calls*2]->(b) RETURN a.name, b.name"
-
-# 1 to 3 hops
-chainsaw graph query "MATCH (a)-[:calls*1..3]->(b) RETURN a.name, b.name"
-
-# Unlimited hops (use carefully!)
-chainsaw graph query "MATCH (a)-[:calls*]->(b) RETURN a.name, b.name"
-```
-
-### Aggregation Queries
-
-```bash
-# Count by entity type
-chainsaw graph query "
-  MATCH (n)
-  RETURN n.entity_type, COUNT(n) AS count
-  GROUP BY n.entity_type
-  ORDER BY count DESC
-"
-
-# Find fan-out (functions that call many others)
-chainsaw graph query "
-  MATCH (a:FUNCTION)-[:calls]->(b)
-  RETURN a.name, COUNT(b) AS targets
-  GROUP BY a.name
-  ORDER BY targets DESC
-  LIMIT 10
-"
-```
-
-### Output Formats
-
-Both search and graph queries support YAML and JSON:
-
-```bash
-chainsaw search "query" --format json
-chainsaw graph query "..." --format json | jq '.results[].f_name'
-```
-
-## Configuration
-
-Configuration file: `~/.chainsaw/config.yaml`
-
-```yaml
-version: "2.0"
-active_profile: "default"
-
-profiles:
-  default:
-    # Directories to watch
-    include:
-      - ~/Projects/myproject
-    
-    # Directories to skip
-    exclude:
-      - node_modules
-      - .git
-      - vendor
-    
-    # File patterns
-    whitelist:
-      - "**/*.go"
-      - "**/*.py"
-      - "**/*.js"
-      - "**/*.ts"
-    
-    # Embedding settings
-    embedding_model: "nomic-embed-text"
-    chunk_size: 512
-    overlap: 64
-```
-
-## Tips and Best Practices
-
-### Search Tips
-
-1. **Use natural language** - "error handling" works better than "try catch"
-2. **Be specific** - "HTTP middleware with authentication" is better than just "middleware"
-3. **Check context** - Search is scoped to current directory
-4. **Increase limit** - Default is 10 results, use `--limit 20` for more
-
-### Graph Query Tips
-
-1. **Start simple** - Begin with single-hop queries, then add complexity
-2. **Use LIMIT** - Always limit results to avoid overwhelming output
-3. **Return snippets** - Use `t.snippet` to see actual code in results
-4. **Return file paths** - Use `t.file` and `t.lines` to locate code
-5. **Watch depth** - Multi-hop queries can explode; start with `*1..2`
-
-### Performance Tips
-
-1. **Index incrementally** - Daemon watches for changes automatically
-2. **Exclude noise** - Add `node_modules`, `vendor`, `.git` to exclude list
-3. **Use whitelist** - Specify file patterns to index only relevant files
-4. **Monitor status** - Run `chainsaw status` to check indexing progress
-5. **Check daemon logs** - `journalctl --user -u chainsawd -f`
-
-### Troubleshooting
-
-```bash
-# Check daemon status
-systemctl --user status chainsawd
-
-# View daemon logs
-journalctl --user -u chainsawd -f
-
-# Verify database
-chainsaw status
-
-# Check Ollama
-ollama list
-ollama pull nomic-embed-text
-
-# Rebuild binary
-cd ~/Projects/chainsaw
-make install
-hash -r  # Clear shell cache
-```
-
-## Common Patterns
-
-### Finding Code Entry Points
-
-```bash
-chainsaw search "main function application entry"
-chainsaw graph query "MATCH (m:FUNCTION) WHERE m.name = 'main' RETURN m.snippet, m.file"
-```
-
-### Exploring Dependencies
-
-```bash
-# What does this package import?
-chainsaw graph query "MATCH (p:PACKAGE)-[:imports]->(t) WHERE p.name = 'api' RETURN t.name"
-
-# What imports this package?
-chainsaw graph query "MATCH (p)-[:imports]->(t:PACKAGE) WHERE t.name = 'utils' RETURN p.name"
-```
-
-### Finding Implementations
-
-```bash
-# What implements this interface?
-chainsaw graph query "MATCH (i:INTERFACE)<-[:implements]-(s) WHERE i.name = 'Handler' RETURN s.name, s.snippet"
-```
-
-### Analyzing Call Graphs
-
-```bash
-# Direct calls
-chainsaw graph query "MATCH (a:FUNCTION)-[:calls]->(b) WHERE a.name = 'processRequest' RETURN b.name"
-
-# Call chains
-chainsaw graph query "MATCH (a:FUNCTION)-[:calls*1..3]->(b) WHERE a.name = 'main' RETURN b.name, b.file"
-```
-
-## Integration with AI Agents
-
-Chainsaw's YAML output is designed for AI agent consumption:
-
-```bash
-# Search for relevant code
-CONTEXT=$(chainsaw search "database schema migrations" --format yaml)
-
-# Query relationships
-GRAPH=$(chainsaw graph query "MATCH (m:FUNCTION)-[:calls]->(d) WHERE m.name =~ '.*migrate.*' RETURN m.name, d.name" --format yaml)
-
-# Feed to LLM
-echo "$CONTEXT" | llm "Explain these database migration patterns"
-```
-
-## Example Workflows
-
-### Understanding a New Codebase
-
-```bash
-# 1. Index the codebase
-cd /path/to/project
-chainsaw index .
-
-# 2. Find entry points
-chainsaw search "main application entry point"
-
-# 3. Explore main dependencies
-chainsaw graph query "MATCH (m:FUNCTION)-[:calls]->(t) WHERE m.name = 'main' RETURN t.name"
-
-# 4. Find key interfaces
-chainsaw graph query "MATCH (i:INTERFACE) RETURN i.name, i.snippet LIMIT 10"
-
-# 5. See what implements them
-chainsaw graph query "MATCH (i:INTERFACE)<-[:implements]-(s) RETURN i.name, s.name"
-```
-
-### Refactoring Analysis
-
-```bash
-# Find all callers of a function
-chainsaw graph query "MATCH (a)-[:calls]->(t:FUNCTION) WHERE t.name = 'oldFunction' RETURN a.name, a.file, a.lines"
-
-# Find transitive dependencies
-chainsaw graph query "MATCH (a:FUNCTION)-[:calls*]->(b) WHERE a.name = 'criticalFunction' RETURN b.name"
-
-# Find most-coupled components
-chainsaw graph query "
-  MATCH (a:FUNCTION)-[:calls]->(b)
-  RETURN a.name, COUNT(b) AS dependencies
-  GROUP BY a.name
-  ORDER BY dependencies DESC
-  LIMIT 20
-"
-```
-
-## Limitations
-
-- **Read-only** - Cannot modify code
-- **No cross-project queries** - Search scoped to current directory tree
-- **Graph only for parsed languages** - Go, Python, JS/TS, Rust, Java, C/C++, Ruby; other files are searchable but have no graph
-- **Index lag** - New changes take a few seconds to index
-- **No version control** - Searches current state only, not history
-
-## Resources
-
-- **Manual**: See `MANUAL.md` for complete reference
-- **Developer Guide**: See `DEVELOPER.md` for architecture
-- **Examples**: Check `examples/` directory
-- **Issues**: https://github.com/wouteroostervld/chainsaw/issues
-
-## Version
-
-Compatible with Chainsaw v0.1.0+ (Schema version 2.4.0)
+| | |
+|---|---|
+| `--expand body` | The whole definition around each result. Smallest; start here. |
+| `--expand file` | The file folded to signatures, with those definitions in full. |
+| `--expand calls` | As `file`, plus what those definitions call. For following code. |
+
+## Which to use
+
+- **"Where is X used?"** `chainsaw grep -s 'X'`: every use, grouped by definition.
+- **"Change X everywhere."** `chainsaw grep 'X'` for the complete list. Never rely on the graph alone for completeness: it does not see strings, comments, macros or reflection.
+- **"What does this file do?"** `chainsaw outline <file>`.
+- **"Who calls X?" / "What does X reach?"** `chainsaw query`, then `--expand body` to read the callers.
+- **"What implements this interface?"** `chainsaw query` with `[:implements]`.
+- **You only have a description and no name.** There is no semantic search. Guess identifiers with `grep -i`, or outline the likely files.

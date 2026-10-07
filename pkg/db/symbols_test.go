@@ -9,10 +9,7 @@ import (
 
 func openSymbolsDB(t *testing.T) *DB {
 	t.Helper()
-	db, err := Open(Config{
-		Path:         filepath.Join(t.TempDir(), "test.db"),
-		EmbeddingDim: 4,
-	})
+	db, err := Open(Config{Path: filepath.Join(t.TempDir(), "test.db")})
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -27,7 +24,7 @@ func addFile(t *testing.T, db *DB, path string) (fileID, chunkID int64) {
 	if err != nil {
 		t.Fatalf("Failed to upsert file: %v", err)
 	}
-	chunkID, err = db.InsertChunk(fileID, "content of "+path, []float32{1, 0, 0, 0}, 1, 10)
+	chunkID, err = db.InsertChunk(fileID, "content of "+path, 1, 10)
 	if err != nil {
 		t.Fatalf("Failed to insert chunk: %v", err)
 	}
@@ -144,8 +141,8 @@ func TestDeleteChunksForFile_RemovesGraph(t *testing.T) {
 	fileID, chunkID := addFile(t, db, "/proj/a.py")
 	defs := []SymbolDef{
 		{Name: "a", EntityType: "PACKAGE", ChunkID: chunkID, Parent: -1},
-		{Name: "f", EntityType: "FUNCTION", ChunkID: chunkID, Parent: 0},
-		{Name: "g", EntityType: "FUNCTION", ChunkID: chunkID, Parent: 0},
+		{Name: "f", EntityType: "FUNCTION", ChunkID: chunkID, Parent: 0, StartLine: 1, EndLine: 5},
+		{Name: "g", EntityType: "FUNCTION", ChunkID: chunkID, Parent: 0, StartLine: 7, EndLine: 9},
 	}
 	refs := []SymbolRef{{Source: 1, RelationType: "calls", Name: "g", ExternalName: "g"}}
 	if err := db.StoreFileSymbols(fileID, "/proj", defs, refs); err != nil {
@@ -155,11 +152,20 @@ func TestDeleteChunksForFile_RemovesGraph(t *testing.T) {
 		t.Fatalf("calls = %v, want %v", got, want)
 	}
 
+	// What f calls can be looked up by where f is
+	callees, err := db.Callees("/proj/a.py", 1, 5)
+	if err != nil {
+		t.Fatalf("Callees failed: %v", err)
+	}
+	if want := []Location{{Name: "g", Type: "FUNCTION", Path: "/proj/a.py", StartLine: 7, EndLine: 9}}; !reflect.DeepEqual(callees, want) {
+		t.Errorf("callees = %+v, want %+v", callees, want)
+	}
+
 	if err := db.DeleteChunksForFile(fileID); err != nil {
 		t.Fatalf("DeleteChunksForFile failed: %v", err)
 	}
 
-	for _, table := range []string{"vec_chunks", "entities", "graph_edges", "symbol_defs", "symbol_refs"} {
+	for _, table := range []string{"chunks", "entities", "graph_edges", "symbol_defs", "symbol_refs"} {
 		var count int
 		if err := db.conn.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
 			t.Fatalf("Failed to count %s: %v", table, err)

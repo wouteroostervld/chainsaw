@@ -1,471 +1,269 @@
-# Chainsaw User Manual
+# Chainsaw Manual
 
-Comprehensive guide to using Chainsaw for semantic code search and knowledge graph queries.
+Chainsaw looks at code through its syntax tree. It has three ways of looking,
+`grep`, `outline` and `query`, and one way of showing what it found in more
+or less context, `--expand`.
 
-## Table of Contents
+## Contents
 
-1. [Installation](#installation)
-2. [Getting Started](#getting-started)
-3. [Commands Reference](#commands-reference)
-4. [Semantic Search](#semantic-search)
-5. [Graph Queries](#graph-queries)
-6. [Configuration](#configuration)
-7. [Advanced Usage](#advanced-usage)
-8. [Troubleshooting](#troubleshooting)
+- [Installation](#installation)
+- [grep](#grep): search, with the definition around each match
+- [outline](#outline): a file folded to its signatures
+- [query](#query): the code graph
+- [Showing code: --expand](#showing-code---expand)
+- [The index](#the-index)
+- [The graph](#the-graph)
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
 
 ## Installation
-
-### Prerequisites
-
-- **Go 1.24.7 or later** - For building from source
-- **Ollama** - Running locally for embeddings ([Install Ollama](https://ollama.ai/))
-- **Linux/macOS** - Primary supported platforms
-
-### Quick Install
 
 ```bash
 git clone https://github.com/wouteroostervld/chainsaw.git
 cd chainsaw
-make install
+make install          # builds to ~/.local/bin/chainsaw
 ```
 
-This builds and installs `chainsaw` to `~/.local/bin/chainsaw`. Ensure `~/.local/bin` is in your `PATH`:
+Needs Go 1.24.7+ and a C compiler. Nothing else: there is no model to pull
+and no service to run. `grep` and `outline` work straight away; `query`
+needs `chainsaw index <path>` first.
+
+## grep
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+chainsaw grep [options] <pattern> [path...]
 ```
 
-### Verify Installation
+Searches files with a Perl-compatible regular expression (PCRE2: lookaround,
+backreferences, `\b`, `(?i)`, and so on) and groups the matching lines by the
+definition they are in.
+
+```
+$ chainsaw grep 'relation_type\s+(IN|=)' pkg/db
+pkg/db/chunks.go
+  METHOD DB.Callees  (lines 95-123)
+    102: JOIN graph_edges g ON g.source_entity_id = sd.entity_id AND g.relation_type = ?
+pkg/db/symbols.go
+  FUNCTION resolveSymbols  (lines 197-285)
+    233: WHERE source_entity_id = ? AND chunk_id = ? AND relation_type IN (?, ?)
+```
+
+Each group names the innermost definition around the lines: its type
+(`FUNCTION`, `METHOD`, `STRUCT`, `INTERFACE`, `CLASS`, `TYPE`), its qualified
+name (`Type.method`), and where it starts and ends. Lines outside any
+definition, and matches in files that cannot be parsed, are listed without
+one.
+
+| Option | |
+|---|---|
+| `-i` | Ignore case |
+| `-F` | The pattern is a literal string |
+| `-w` | Match whole words only |
+| `-s` | Only list the definitions that contain a match, with a count |
+| `--expand body\|file\|calls` | Show the code, see [below](#showing-code---expand) |
+
+Without a path the current directory is searched. Hidden directories and the
+`exclude` directories of your configuration are skipped; a file named
+explicitly is always searched. `^` and `$` match at line ends. No index is
+needed, so results are always current.
+
+`-s` is the quick way to answer "which functions touch this": it is the list
+to work through when something has to change everywhere.
+
+## outline
 
 ```bash
-chainsaw version
+chainsaw outline [options] <file>
 ```
 
-## Getting Started
-
-### 1. Initialize Database
-
-Create the database and schema:
-
-```bash
-chainsaw init
-```
-
-This creates `~/.chainsaw/chainsaw.db` with the necessary tables for vector search and knowledge graphs.
-
-### 2. Pull Embedding Model
-
-Chainsaw uses Ollama for generating embeddings. Pull the default model:
-
-```bash
-ollama pull nomic-embed-text
-```
-
-### 3. Start the Daemon
-
-The daemon watches for file changes and keeps your index up-to-date:
-
-```bash
-chainsaw daemon start
-```
-
-Or install as a systemd service (Linux):
-
-```bash
-make daemon-install
-systemctl --user status chainsawd
-```
-
-### 4. Index Your Code
-
-```bash
-# Index current directory
-cd /path/to/your/project
-chainsaw index .
-
-# Or index specific directory
-chainsaw index ~/Projects/myapp
-```
-
-The daemon processes files in the background, extracting:
-- Code chunks with semantic embeddings (vector search)
-- Entity relations (function calls, imports, etc.)
-- Knowledge graph structure
-
-### 5. Check Indexing Progress
-
-```bash
-chainsaw status
-```
-
-Example output:
-```yaml
-database: /home/user/.chainsaw/chainsaw.db
-schema_version: 2.4.0
-files_indexed: 211
-total_chunks: 954
-total_entities: 428
-total_edges: 156
-```
-
-### 6. Search Your Code
-
-```bash
-# Semantic search
-chainsaw search "error handling patterns"
-
-# Graph query
-chainsaw graph query "MATCH (f:FUNCTION)-[:calls]->(t) RETURN f.name, t.name LIMIT 10"
-```
-
-## Commands Reference
-
-### `chainsaw init`
-
-Initialize the database schema.
-
-```bash
-chainsaw init
-```
-
-Creates `~/.chainsaw/chainsaw.db` with tables for files, chunks, embeddings, entities, and graph edges.
-
-### `chainsaw index <path>`
-
-Queue a directory for indexing.
-
-```bash
-chainsaw index .                    # Index current directory
-chainsaw index ~/Projects/myapp     # Index specific directory
-```
-
-The daemon must be running to process the index queue.
-
-### `chainsaw search <query>`
-
-Perform semantic search using vector embeddings.
-
-```bash
-chainsaw search "database connection pooling"
-chainsaw search "authentication middleware" --limit 5
-chainsaw search "error handling" --format yaml
-```
-
-**Options:**
-- `--limit N` - Limit results to N items (default: 10)
-- `--format yaml|json` - Output format (default: yaml)
-
-**Context-aware**: Automatically filters results to current directory and subdirectories.
-
-### `chainsaw graph query <cypher>`
-
-Query the knowledge graph using Cypher-like syntax.
-
-```bash
-chainsaw graph query "MATCH (f:FUNCTION)-[:calls]->(t) RETURN f.name, t.name"
-```
-
-See [Graph Queries](#graph-queries) for detailed syntax.
-
-### `chainsaw daemon start|stop|status`
-
-Manage the background indexing daemon.
-
-```bash
-chainsaw daemon start      # Start daemon
-chainsaw daemon stop       # Stop daemon
-chainsaw daemon status     # Check daemon status
-```
-
-The daemon:
-- Watches configured directories for changes
-- Indexes new/modified files
-- Builds the graph from the syntax tree
-- Keeps embeddings up-to-date
-
-### `chainsaw status`
-
-Show database statistics and daemon status.
-
-```bash
-chainsaw status
-```
-
-### `chainsaw version`
-
-Show version information.
-
-```bash
-chainsaw version
-```
-
-## Semantic Search
-
-Semantic search finds code by **meaning**, not just keywords. It uses vector embeddings to understand the semantic similarity between your query and code chunks.
-
-### Basic Search
-
-```bash
-chainsaw search "error handling patterns"
-```
-
-### Semantic Chunks and Folded Results
-
-Files in a known syntax are not cut into fixed-size blocks but along their
-syntax tree. Every definition is a chunk of its own, and where it sits in the
-enclosing chunk only its signature remains, with a reference to the lines of
-the chunk that holds the body:
+Prints a file folded to its skeleton. Every definition of five lines or more
+is reduced to its signature and a reference to the lines of its body:
 
 ```go
 package indexer
 
-func New(cfg *Config, database db.Database) *Indexer // ... chunk: lines 54-65
+func New(cfg *Config, database db.Database) *Indexer // ... chunk: lines 44-54
 
-func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error // ... chunk: lines 80-161
+func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error // ... chunk: lines 56-109
 ```
 
-This repeats at every level: a file lists its classes, a class its methods, a
-method its nested functions. A chunk that is still too large to embed gets its
-biggest loops, branches and literals folded the same way; only what cannot be
-folded any further is split into blocks.
+This repeats inside: a class lists its methods, a method its nested
+functions. Markdown folds along its headings.
 
-How much of this a search result shows is set with `--expand`:
+| Option | |
+|---|---|
+| `--expand NAME` | Show this definition in full: a qualified name, a bare name, or a line number. Repeatable. |
+| `--symbols` | List the definitions instead: type, name, lines, signature |
+
+## query
 
 ```bash
-chainsaw search --expand body "error handling"   # Just the definition that matched
-chainsaw search --expand file "error handling"   # The folded file, with the matches in full
-chainsaw search --expand calls "error handling"  # Also what the matches call (default)
-chainsaw search --limit 3 "error handling"       # Match fewer chunks (default 10)
+chainsaw query [options] '<cypher>'
 ```
 
-- `body` gives the whole definition, even when it had to be embedded in
-  several blocks. Nested definitions stay folded.
-- `file` shows where the match sits: all matches in one file are one result.
-- `calls` also shows in full the definitions the matches call. Those in the
-  same file are expanded in place; those in other files follow as related
-  chunks. Only `calls` edges are followed, not `may_call`.
-
-Supported: Go, Python, JavaScript, TypeScript/TSX, Rust, Java, C, C++ and
-Ruby. Markdown is folded along its sections; HTML and XML only where a chunk
-would be too large. Other files are split into overlapping blocks as before.
-
-### Advanced Search Examples
-
-```bash
-# Find HTTP server implementations
-chainsaw search "HTTP server with middleware"
-
-# Find database migrations
-chainsaw search "database schema migrations"
-
-# Find authentication code
-chainsaw search "user authentication and session management"
-
-# Find API endpoints
-chainsaw search "REST API endpoint handlers"
-
-# Find test utilities
-chainsaw search "test helper functions and fixtures"
-```
-
-### Search Results
-
-Results are returned in YAML format with snippets and file locations:
-
-```yaml
-query: "error handling patterns"
-results:
-  - index: 0
-    file: /home/user/project/pkg/errors/handler.go
-    lines: "42-58"
-    similarity: 0.8734
-    snippet: |
-      func HandleError(err error) {
-          if err == nil {
-              return
-          }
-          log.Error("error occurred", "err", err)
-          // ...
-      }
-  - index: 1
-    file: /home/user/project/pkg/api/middleware.go
-    lines: "23-35"
-    similarity: 0.8421
-    snippet: |
-      func ErrorMiddleware(next http.Handler) http.Handler {
-          return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-              // ...
-          })
-      }
-total: 2
-```
-
-### Context-Aware Filtering
-
-Search results are automatically filtered to your current working directory:
-
-```bash
-cd ~/Projects/myapp/api
-chainsaw search "error handling"
-# Only returns results from ~/Projects/myapp/api and subdirectories
-```
-
-## Graph Queries
-
-Query code relationships using a Cypher-like graph query language.
-
-### Basic Syntax
+Queries the graph of definitions and how they relate, in a subset of Cypher.
 
 ```cypher
-MATCH (source:TYPE)-[relation]->(target)
-RETURN source.property, target.property
+// Who calls this function?
+MATCH (f)-[:calls]->(t) WHERE t.name = "ext4_orphan_add" RETURN f.name, f.file, f.lines
+
+// What does this one call, up to three levels deep?
+MATCH (a {name: "handleIndex"})-[:calls*1..3]->(b) RETURN b.name, b.signature
+
+// Which types implement an interface, and what do calls through it reach?
+MATCH (s)-[:implements]->(i {name: "Database"}) RETURN s.name
+MATCH (f)-[:may_call]->(t) WHERE t.name ENDS WITH ".StoreFileSymbols" RETURN f.name, t.name
+
+// The functions of a directory, with their signatures
+MATCH (n:FUNCTION|METHOD) WHERE n.file CONTAINS "/indexer/" RETURN n.signature, n.lines
+
+// Most-called functions
+MATCH (f)-[:calls]->(t) RETURN t.name, count(f) AS callers ORDER BY callers DESC LIMIT 10
+
+// What is called but not defined in the index
+MATCH (f)-[:calls]->(t:EXTERNAL) RETURN t.name, count(f) AS n ORDER BY n DESC LIMIT 20
 ```
 
-### Where the Graph Comes From
+### Patterns
 
-For the languages listed under [Semantic Chunks](#semantic-chunks-and-folded-results)
-the graph is read from the syntax tree: every definition is an entity, and
-every call and import in the source is an edge. No LLM is involved, and
-files in other languages are searchable but have no entities or edges.
+| | |
+|---|---|
+| `(v)` `(v:LABEL)` `(v:A\|B)` | A node; labels are entity types, not case-sensitive |
+| `(v {name: "x"})` | A node with a property equal to a value |
+| `-[:type]->` `<-[:type]-` `-[:type]-` | An edge, forward, backward or either way |
+| `-[:a\|b]->` | Any of several relation types |
+| `-[r:type]->` | Names the edge so its properties can be used |
+| `-[:calls*1..3]->` `-[:calls*2]->` `-[*]->` | A path of several edges; up to 5 when no limit is given |
+| `-->` `<--` `--` | An edge of any type |
 
-**Go** files are also run through the Go type checker, so every call has
-its exact target: the function or method it refers to, in the file that
-declares it, whatever variable, field or package it is reached through. A
-call of an interface method is a `calls` edge to that method of the
-interface, plus a `may_call` edge to the method of each type that implements
-the interface, and each such type has an `implements` edge to the interface.
-Calls of function values (callbacks, closures in variables) have no target
-and are left out. The type checker looks at the types in the package and
-what it imports, so an implementation that is only wired in elsewhere is
-found through `implements`, not through `may_call`. Dependencies are located
-with the `go` command; if it is not available, calls into them fall back to
-the rules below.
+A query matches one path: `(a)-[...]->(b)-[...]->(c)`, of any length, or a
+single node.
 
-For the **other languages** the syntax tree gives names, not types. An edge
-is `calls` when the target follows from the source itself: a function in the
-same directory, a name reached through an import, a method on `self`/`this`
-or on a named type. When only the name is known, as with a method call on a
-variable, the edge is `may_call` and goes to every definition in the project
-with that name.
+### Properties
 
-### Entity Types
+| Node | |
+|---|---|
+| `name` | Qualified name: `Open`, `Store.Close` |
+| `type` | Entity type |
+| `file` | Path of the file it is defined in; null for `EXTERNAL` |
+| `line`, `end_line`, `lines` | Where the definition starts and ends; `lines` is `"12-40"` |
+| `signature` | The definition up to its body |
+| `container`, `short_name` | The two halves of a method's name |
+| `snippet` | The code of the chunk it is in |
 
-Supported entity types:
-- `FUNCTION` - Functions
-- `METHOD` - Methods; named `Type.method`
-- `CLASS` - Classes and modules
-- `STRUCT` - Struct definitions
-- `INTERFACE` - Interfaces and traits
-- `TYPE` - Other type definitions
-- `PACKAGE` - A source file's package or module, and imported packages
-- `EXTERNAL` - Something that is called but not defined in the index, such as `fmt.Println`
+| Edge | |
+|---|---|
+| `type` | Relation type |
+| `weight` | 1.0 for an exact edge, 0.5 for one matched by name |
+| `depth` | Length of a path of several edges |
 
-### Relation Types
+### Clauses
 
-Supported relationships:
-- `calls` - Function/method calls with a known target
-- `may_call` - Calls that may end up there: dispatched through an interface (Go), or matched by name only
-- `implements` - A type implements an interface (Go)
-- `imports` - Package imports
-- `defines` - A package defines its functions and types, a class its methods
+- `WHERE` with `=` `<>` `<` `>` `<=` `>=`, `CONTAINS`, `STARTS WITH`,
+  `ENDS WITH`, `=~` (regular expression), `IN [...]`, `IS NULL`,
+  `IS NOT NULL`, combined with `AND`, `OR`, `NOT` and parentheses
+- `RETURN` a node (`v` gives name, type, file and lines), a property, or
+  `count(*)`, `count(v)`, `count(DISTINCT v.prop)`; `AS` to name a column;
+  `DISTINCT`. With a count, the other columns are what is grouped by.
+- `ORDER BY ... [DESC]`, `SKIP n`, `LIMIT n`
 
-### Query Examples
+### Options
 
-#### Find Function Calls
+| Option | |
+|---|---|
+| `--all` | Do not limit results to the current directory |
+| `--limit N` | Rows to return when the query has no `LIMIT` (default 100) |
+| `--expand body\|file\|calls` | Also show the code of the returned nodes |
+| `--sql` | Print the SQL the query is translated to |
+
+By default a result must touch the current directory: at least one node of
+the matched path is defined under it. `chainsaw graph query` is accepted as
+an older spelling of `chainsaw query`.
+
+## Showing code: --expand
+
+`grep` and `query` find places. `--expand` shows the code at those places,
+in one of three amounts:
+
+| | |
+|---|---|
+| `body` | The whole definition around each place. Nested definitions stay folded. |
+| `file` | The file folded as by `outline`, with those definitions in full. All places in one file share one view. |
+| `calls` | As `file`, and also what those definitions call: in place when it is in the same file, after it when it is in another. Uses the index, and follows `calls` edges only. |
 
 ```bash
-chainsaw graph query "MATCH (f:FUNCTION)-[:calls]->(t) RETURN f.name, t.name"
+chainsaw grep --expand body 'filepath\.SkipDir' cmd
+chainsaw query --expand file 'MATCH (f)-[:calls]->(t {name: "nearest"}) RETURN f'
 ```
 
-#### Find Interface Implementations
+`body` is the smallest and usually enough. `file` shows where the code sits.
+`calls` is for following the code without opening more files.
+
+## The index
 
 ```bash
-chainsaw graph query "MATCH (i:INTERFACE)<-[:implements]-(s:STRUCT) RETURN i.name, s.name"
+chainsaw index <path>         # parse and record the files under a path
+chainsaw index --force <path> # also files that have not changed
+chainsaw status               # what is in the index
+chainsaw daemon start         # watch the configured directories for changes
 ```
 
-#### Get Code Snippets
+`index` parses each source file and records its definitions, calls and
+imports. Unchanged files are skipped, so running it again is cheap. It takes
+seconds: this repository in about four, the Linux kernel's `fs/ext4` (70,000
+lines) in about two.
 
-```bash
-chainsaw graph query "MATCH (f:FUNCTION)-[:calls]->(t) RETURN f.name, t.name, t.snippet, t.file"
-```
+The daemon is optional. It watches the `include` directories of your
+configuration and re-indexes files as they change; without it, run
+`chainsaw index` when you want the graph refreshed. Files that have been
+deleted leave the index the next time the daemon sees them queued.
 
-#### Multi-Hop Queries
+The index is `~/.chainsaw/graph.db`. It can be deleted at any time.
 
-Find indirect relationships using `*min..max` syntax:
+## The graph
 
-```bash
-# Find functions called 2 hops away
-chainsaw graph query "MATCH (f:FUNCTION)-[:calls*2]->(t) RETURN f.name, t.name"
+Every definition is an entity; every call and import in the source is an
+edge.
 
-# Find call chains up to 3 levels deep
-chainsaw graph query "MATCH (a:FUNCTION)-[:calls*1..3]->(b) RETURN a.name, b.name"
+**Entity types:** `FUNCTION`, `METHOD` (named `Type.method`), `CLASS`,
+`STRUCT`, `INTERFACE`, `TYPE`, `PACKAGE` (a file's package or module, and
+what it imports), and `EXTERNAL` for something that is called but not defined
+in the index, such as `fmt.Println`.
 
-# Find all transitive imports
-chainsaw graph query "MATCH (p:PACKAGE)-[:imports*]->(t) RETURN p.name, t.name"
-```
+**Relation types:**
 
-#### Aggregation Queries
+- `calls`: a call whose target is known
+- `may_call`: a call that may end up there
+- `implements`: a type implements an interface (Go)
+- `imports`: a file imports a package
+- `defines`: a package defines its functions and types, a class its methods
 
-Count, group, and sort results:
+How exact `calls` is depends on the language.
 
-```bash
-# Most-called functions
-chainsaw graph query "
-  MATCH (a)-[:calls]->(b)
-  RETURN b.name, COUNT(a) AS callers
-  GROUP BY b.name
-  ORDER BY callers DESC
-  LIMIT 10
-"
+**Go** files are run through the Go type checker. Every call has its exact
+target, whatever variable, field or package it is reached through. A call of
+an interface method is a `calls` edge to that method of the interface, plus a
+`may_call` edge to the method of each type that implements it. So to find
+everything that can reach an implementation, ask for `[:calls|may_call]`.
+Calls of function values have no target and are left out. Implementations
+are looked for in the package and what it imports; the `implements` edges
+find the rest. Dependencies are located with the `go` command; without it,
+calls into them fall back to the rules below.
 
-# Fan-out (functions that call many others)
-chainsaw graph query "
-  MATCH (a:FUNCTION)-[:calls]->(b)
-  RETURN a.name, COUNT(b) AS targets
-  GROUP BY a.name
-  ORDER BY targets DESC
-  LIMIT 10
-"
+**The other languages** have names, not types. An edge is `calls` when the
+target follows from the source: a function in the same directory, a name
+reached through an import, a method on `self`/`this` or on a named type.
+When only the name is known, as with a method call on a variable, the edge is
+`may_call` and goes to every definition in the same repository with that
+name.
 
-# Entity type distribution
-chainsaw graph query "
-  MATCH (n)
-  RETURN n.entity_type, COUNT(n) AS count
-  GROUP BY n.entity_type
-  ORDER BY count DESC
-"
-```
-
-### Return Properties
-
-Available properties for return values:
-- `name` - Entity name
-- `entity_type` - Entity type (FUNCTION, STRUCT, etc.)
-- `snippet` - Full code snippet
-- `file` - Absolute file path
-- `lines` - Line range (e.g., "42-58")
-
-### Query Result Format
-
-Results are returned in YAML:
-
-```yaml
-query: "MATCH (f:FUNCTION)-[:calls]->(t) RETURN f.name, t.name"
-results:
-  - index: 0
-    f_name: main
-    t_name: initialize
-  - index: 1
-    f_name: handleSearch
-    t_name: SearchSimilar
-total: 2
-```
+A graph built from syntax cannot see calls made through reflection, or
+strings that name a function. `chainsaw grep` can.
 
 ## Configuration
 
-Configuration file: `~/.chainsaw/config.yaml`
-
-### Basic Configuration
+`~/.chainsaw/config.yaml` is optional. Chainsaw uses these settings of the
+active profile:
 
 ```yaml
 version: "2.0"
@@ -473,181 +271,36 @@ active_profile: "default"
 
 profiles:
   default:
-    # Directories to watch and index
+    # Directories the daemon watches
     include:
-      - ~/Projects/myapp
-      - ~/Projects/mylib
-
-    # Directories to skip
+      - ~/Projects
+    # Directory names skipped by grep, index and the daemon
     exclude:
       - node_modules
-      - .git
       - vendor
-      - target
-      - build
-
-    # File patterns to skip
+      - .venv
+      - __pycache__
+    # Files never indexed (regular expressions on the path)
     blacklist:
-      - "**/*.min.js"
-      - "**/*.test.js"
-      - "**/test_*.go"
-
-    # File patterns to include (whitelist)
-    whitelist:
-      - "**/*.go"
-      - "**/*.js"
-      - "**/*.ts"
-      - "**/*.py"
-      - "**/*.java"
-
-    # Embedding settings
-    embedding_model: "nomic-embed-text"
-    chunk_size: 512
-    overlap: 64
+      - '\.min\.js$'
 ```
 
-Older versions extracted the graph with an LLM. The settings for that
-(`graph_driver`, `llm_provider`, `llm_base_url`, `llm_api_key`) are ignored
-and can be removed.
-
-### Advanced Configuration
-
-#### Multiple Profiles
-
-```yaml
-version: "2.0"
-active_profile: "work"
-
-profiles:
-  work:
-    include:
-      - ~/work/projects
-    embedding_model: "nomic-embed-text"
-
-  personal:
-    include:
-      - ~/personal/projects
-    embedding_model: "nomic-embed-text"
-```
-
-Switch profiles by editing `active_profile` and restarting the daemon.
-
-### Local Configuration Override
-
-Create a `.chainsaw.yaml` file in any project directory to override settings:
-
-```yaml
-# Project-specific overrides
-exclude:
-  - generated
-  - .next
-  - dist
-
-blacklist:
-  - "**/*.generated.go"
-
-chunk_size: 256  # Smaller chunks for this project
-```
-
-Local configs can only make filtering MORE restrictive (additive security).
-
-## Advanced Usage
-
-### Indexing Large Codebases
-
-For large projects (1000+ files), consider:
-
-1. **Monitor progress**:
-   ```bash
-   watch -n 5 chainsaw status
-   ```
-
-2. **Check daemon logs**:
-   ```bash
-   journalctl --user -u chainsawd -f
-   ```
-
-### Output Formats
-
-Both `search` and `graph query` support YAML and JSON:
-
-```bash
-chainsaw search "query" --format json
-chainsaw graph query "MATCH ..." --format json
-```
-
-YAML is default for human readability; JSON for programmatic consumption.
+Write directory names without a trailing slash. Settings from older versions
+(`embedding_model`, `chunk_size`, `overlap`, `graph_driver`, `llm_*`) are
+ignored.
 
 ## Troubleshooting
 
-### Daemon Not Starting
+**`query` returns nothing.** Results are limited to the current directory;
+try `--all`. Check `chainsaw status` to see that the files are indexed, and
+`chainsaw index .` if not.
 
-```bash
-# Check status
-chainsaw daemon status
+**A call is missing from the graph.** In Go, check that the package compiles
+and that `go` is on the PATH. In other languages, a method call on a variable
+is a `may_call` edge, not `calls`. Ruby calls written without parentheses are
+not recognised.
 
-# View logs
-journalctl --user -u chainsawd -f
+**The index is from another version.** Chainsaw says so and stops. Remove
+`~/.chainsaw/graph.db` and index again.
 
-# Restart daemon
-systemctl --user restart chainsawd
-```
-
-### No Search Results
-
-1. **Check indexing status**:
-   ```bash
-   chainsaw status
-   ```
-
-2. **Verify Ollama is running**:
-   ```bash
-   ollama list
-   ollama pull nomic-embed-text
-   ```
-
-3. **Check current directory**:
-   Search is scoped to CWD. Try from project root.
-
-### Database Errors
-
-If you encounter database corruption:
-
-```bash
-# Backup current database
-cp ~/.chainsaw/chainsaw.db ~/.chainsaw/chainsaw.db.backup
-
-# Reinitialize
-chainsaw init
-
-# Reindex
-cd /path/to/project
-chainsaw index .
-```
-
-### Slow Indexing
-
-Indexing time is spent on embeddings. Check that Ollama responds quickly, and
-exclude directories that are not worth searching (caches, build output,
-coverage reports).
-
-### Permission Denied
-
-Ensure database directory is writable:
-
-```bash
-ls -la ~/.chainsaw/
-chmod 700 ~/.chainsaw/
-chmod 600 ~/.chainsaw/chainsaw.db
-```
-
-## Getting Help
-
-- **GitHub Issues**: [Report bugs or request features](https://github.com/wouteroostervld/chainsaw/issues)
-- **Check logs**: `journalctl --user -u chainsawd -f`
-- **Verbose mode**: Set `LOG_LEVEL=debug` in environment
-
-## Next Steps
-
-- Explore [Graph Queries](#graph-queries) for advanced code analysis
-- Configure [Multiple Profiles](#multiple-profiles) for different projects
+**Daemon logs.** `journalctl --user -u chainsawd -f`

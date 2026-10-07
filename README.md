@@ -1,26 +1,63 @@
 # 🪚 Chainsaw
 
-**GraphRAG-powered semantic code search and knowledge graph for your codebase**
+**A code graph and context-aware search for your codebase, built from the syntax tree**
 
-Chainsaw indexes your code into a searchable knowledge graph with vector embeddings. Find code by meaning with semantic search, or explore relationships between functions, types, and packages using graph queries.
+Chainsaw parses your source files and answers three kinds of question
+without reading whole files: *where is this text, and what is it inside of*,
+*what does this file look like*, and *what calls what*. No embeddings, no
+model, no GPU: indexing is parsing, and takes seconds.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Nightly Release](https://github.com/wouteroostervld/chainsaw/actions/workflows/nightly-release.yml/badge.svg)](https://github.com/wouteroostervld/chainsaw/actions/workflows/nightly-release.yml)
-## ✨ Features
 
-- **🔍 Semantic Search** - Find code by meaning, not just keywords
-- **🌳 Syntax-Aware Chunks** - Code is chunked along its syntax tree; results show the folded file with the hits expanded
-- **📊 Knowledge Graph** - Query relations between functions, types, and packages, read from the syntax tree
-- **🔄 Multi-Hop Queries** - Explore transitive relationships (e.g., `*1..3` for call chains)
-- **📈 Aggregation** - COUNT, GROUP BY, ORDER BY for code analytics
-- **🎯 Context-Aware** - Automatically scopes to current directory
-- **⚡ Background Indexing** - Daemon watches for changes and keeps index fresh
-- **🤖 AI-Ready** - YAML/JSON output for LLM consumption
-- **🔗 Cypher Queries** - Familiar graph query syntax
+## Commands
 
-## 🚀 Quick Start
+```bash
+# Search with a regular expression (PCRE); each match shows the definition it is in
+chainsaw grep 'IS_EXT2_SB' fs/ext4
 
-### Installation
+# A file folded to its signatures, each with the lines of its body
+chainsaw outline pkg/indexer/indexer.go
+
+# The code graph: who calls this, what implements that
+chainsaw query 'MATCH (f)-[:calls]->(t {name: "Open"}) RETURN f.name, f.file, f.lines'
+```
+
+`grep` and `outline` work on the files as they are on disk and need no index.
+`query` needs one:
+
+```bash
+chainsaw index .          # parse the source files under a path
+chainsaw daemon start     # optional: keep the index current as files change
+```
+
+### What a result looks like
+
+```
+$ chainsaw grep -s 'IS_EXT[23]_SB' fs/ext4
+fs/ext4/super.c
+  (outside any definition): 3
+  FUNCTION ext4_check_opt_consistency  (lines 2773-2853): 2
+  FUNCTION _ext4_show_options  (lines 2960-3089): 1
+  FUNCTION ext4_set_def_opts  (lines 4388-4443): 1
+  FUNCTION ext4_check_feature_compatibility  (lines 4713-4815): 2
+```
+
+Both `grep` and `query` can show the code around a result with `--expand`:
+
+| | |
+|---|---|
+| `--expand body` | the whole definition around each result |
+| `--expand file` | the file folded to signatures, with those definitions in full |
+| `--expand calls` | as `file`, and also what those definitions call |
+
+## Languages
+
+Go, Python, JavaScript, TypeScript/TSX, Rust, Java, C, C++ and Ruby are
+parsed for definitions, calls and imports. Go calls are resolved exactly with
+the Go type checker, including calls through interfaces. Markdown, HTML and
+XML fold into an outline but define no symbols.
+
+## Installation
 
 ```bash
 git clone https://github.com/wouteroostervld/chainsaw.git
@@ -28,203 +65,31 @@ cd chainsaw
 make install
 ```
 
-### Prerequisites
+Needs Go 1.24.7+ and a C compiler (for SQLite and the tree-sitter grammars).
+The `go` command must be on the PATH for exact Go call resolution into
+dependencies.
 
-- [Ollama](https://ollama.ai/) - for embeddings (free, runs locally)
-- Go 1.24.7+ - for building from source
+## Documentation
 
-### Setup
+- **[Manual](MANUAL.md)**: commands, the query language, the graph, configuration
+- **[Agent skill](share/skills/chainsaw/Skill.md)**: how an AI coding agent should use it
 
-```bash
-# Pull embedding model
-ollama pull nomic-embed-text
-
-# Initialize database
-chainsaw init
-
-# Start daemon
-chainsaw daemon start
-
-# Index your code
-cd /path/to/your/project
-chainsaw index .
-```
-
-### Search
-
-```bash
-# Semantic search
-chainsaw search "error handling patterns"
-
-# Graph query  
-chainsaw graph query "MATCH (f:FUNCTION)-[:calls]->(t) RETURN f.name, t.name LIMIT 10"
-
-# Check status
-chainsaw status
-```
-
-## 📖 Documentation
-
-- **[User Manual](MANUAL.md)** - Complete usage guide with examples
-- **[Developer Guide](DEVELOPER.md)** - Architecture, design, and contribution guide
-
-## 💡 Examples
-
-### Semantic Search
-
-```bash
-# Find database code
-chainsaw search "database connection pooling"
-
-# Find auth logic
-chainsaw search "authentication middleware"
-
-# Find error handling
-chainsaw search "error handling patterns" --limit 5
-```
-
-Results automatically filtered to current directory and subdirectories.
-
-### Graph Queries
-
-```bash
-# Find function calls
-chainsaw graph query "MATCH (f:FUNCTION)-[:calls]->(t) RETURN f.name, t.name"
-
-# Find interface implementations
-chainsaw graph query "MATCH (i:INTERFACE)<-[:implements]-(s) RETURN i.name, s.name"
-
-# Multi-hop: Find call chains up to 3 levels deep
-chainsaw graph query "MATCH (a)-[:calls*1..3]->(b) RETURN a.name, b.name"
-
-# Most-called functions
-chainsaw graph query "
-  MATCH (a)-[:calls]->(b)
-  RETURN b.name, COUNT(a) AS callers
-  GROUP BY b.name
-  ORDER BY callers DESC
-  LIMIT 10
-"
-```
-
-## 🏗️ Architecture
+## How it works
 
 ```
-┌─────────────┐
-│   CLI       │  Query interface (read-only)
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────────────────────┐
-│   SQLite + sqlite-vec (WAL)     │  Vector search + graph storage
-└─────────────────────────────────┘
-       ▲
-       │
-┌──────┴──────┐
-│   Daemon    │  Background indexer: chunks, embeddings, graph
-└─────────────┘
-       │
-       ▼
-┌─────────────┐
-│   Ollama    │  Embeddings (local)
-└─────────────┘
+source files ── tree-sitter ──► definitions, calls, imports ──► SQLite graph ──► chainsaw query
+      │              (+ go/types for Go)
+      └────────────────────────────────────────────────────────► chainsaw grep / outline
 ```
 
-**Key components:**
-- **Database**: SQLite with `sqlite-vec` extension for vector similarity search
-- **Daemon**: Background worker that indexes files and builds the graph from their syntax tree
-- **CLI**: Read-only query interface for search and graph queries
-- **Embeddings**: Ollama (local)
+The index lives in `~/.chainsaw/graph.db`. It holds no source of truth: delete
+it and run `chainsaw index` again at any time.
 
-## ⚙️ Configuration
+## License
 
-Default config: `~/.chainsaw/config.yaml`
+MIT, see [LICENSE](LICENSE).
 
-```yaml
-version: "2.0"
-active_profile: "default"
+## Credits
 
-profiles:
-  default:
-    include:
-      - ~/Projects/myproject
-    exclude:
-      - node_modules
-      - .git
-    whitelist:
-      - "**/*.go"
-      - "**/*.js"
-      - "**/*.py"
-    embedding_model: "nomic-embed-text"
-    chunk_size: 512
-    overlap: 64
-```
-
-See [Manual](MANUAL.md#configuration) for advanced configuration.
-
-## 🛠️ Development
-
-```bash
-# Build locally
-make build
-
-# Install
-make install
-
-# Run tests
-make test
-
-# Development loop (build + restart daemon)
-make dev
-```
-
-See [Developer Guide](DEVELOPER.md) for architecture details and contribution guidelines.
-
-## 🔧 Commands
-
-| Command | Description |
-|---------|-------------|
-| `chainsaw init` | Initialize database |
-| `chainsaw index <path>` | Index directory |
-| `chainsaw search <query>` | Semantic search |
-| `chainsaw graph query <cypher>` | Graph query |
-| `chainsaw daemon start/stop` | Manage daemon |
-| `chainsaw status` | Show statistics |
-| `chainsaw version` | Show version |
-
-## 📊 Performance
-
-- **Graph**: read from the syntax tree while indexing, no LLM calls
-- **Search latency**: Sub-second semantic search
-- **Scalability**: Tested with 200+ files, 1000+ chunks
-
-## 🤝 Contributing
-
-Contributions welcome! See [Developer Guide](DEVELOPER.md) for:
-- Architecture overview
-- Design principles
-- Development workflow
-- Testing guidelines
-
-## 📝 License
-
-MIT License - see LICENSE file for details
-
-## 🙏 Credits
-
-Built with:
-- [sqlite-vec](https://github.com/asg017/sqlite-vec) - Vector search extension
-- [Ollama](https://ollama.ai/) - Local LLM runtime
-- [fsnotify](https://github.com/fsnotify/fsnotify) - File system watching
-
-## 🔗 Links
-
-- **Documentation**: [MANUAL.md](MANUAL.md)
-- **Development**: [DEVELOPER.md](DEVELOPER.md)
-- **Issues**: [GitHub Issues](https://github.com/wouteroostervld/chainsaw/issues)
-
----
-
-**Status**: Production-ready. Actively maintained.
-
-**Version**: 2.4.0 (Schema version)
+Built with [tree-sitter](https://tree-sitter.github.io/), SQLite, PCRE2 and
+[fsnotify](https://github.com/fsnotify/fsnotify).

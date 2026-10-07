@@ -6,12 +6,11 @@
 // folded definition is a chunk of its own, with its nested definitions folded
 // the same way.
 //
-// A chunk that is still larger than the embedding limit gets its biggest
+// When a size limit is given, a chunk that is still larger gets its biggest
 // statements (loops, branches, literals) folded the same way, until it fits.
 //
 // The same parse also yields the symbols a file defines and the calls and
-// imports it contains, so the knowledge graph can be built from the syntax
-// tree instead of being guessed by an LLM.
+// imports it contains, from which the code graph is built.
 //
 // Markup is chunked too, without symbols: Markdown along its sections, HTML
 // and XML by folding the largest elements of a chunk that is too big.
