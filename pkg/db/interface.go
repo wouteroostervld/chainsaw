@@ -5,7 +5,7 @@ package db
 type Database interface {
 	// File registry and work queue
 	UpsertFile(path string, modTime int64, contentHash string) (int64, error)
-	DeleteFile(path string) error
+	ForgetFile(path string) error
 	MarkFilePending(path string, modTime int64, contentHash string) error
 	GetPendingFiles(limit int) ([]*File, error)
 	MarkFileProcessing(fileID int64) error

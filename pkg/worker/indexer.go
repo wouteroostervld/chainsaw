@@ -104,17 +104,18 @@ func (w *IndexWorker) processFile(ctx context.Context, file *db.File) {
 
 	slog.Debug("Processing file", "file", file.Path, "retry", file.RetryCount)
 
-	// A file that was deleted has nothing left to index
+	// A file that is gone from disk has nothing left to index; the index
+	// forgets it
 	if _, err := os.Stat(file.Path); os.IsNotExist(err) {
 		if err := w.db.DeleteChunksForFile(file.ID); err != nil {
-			slog.Error("Failed to delete chunks of removed file", "file", file.Path, "error", err)
+			slog.Error("Failed to forget chunks of removed file", "file", file.Path, "error", err)
 			return
 		}
-		if err := w.db.DeleteFile(file.Path); err != nil {
-			slog.Error("Failed to delete removed file", "file", file.Path, "error", err)
+		if err := w.db.ForgetFile(file.Path); err != nil {
+			slog.Error("Failed to forget removed file", "file", file.Path, "error", err)
 			return
 		}
-		slog.Info("Removed deleted file from index", "file", file.Path)
+		slog.Info("removed file detected: " + file.Path)
 		return
 	}
 

@@ -101,8 +101,9 @@ func (db *DB) GetFileByID(id int64) (*File, error) {
 	return &f, nil
 }
 
-// DeleteFile removes a file and cascades to related chunks/edges
-func (db *DB) DeleteFile(path string) error {
+// ForgetFile drops the index's record of a file. The file on disk is not
+// touched: this is for a file that is already gone from it.
+func (db *DB) ForgetFile(path string) error {
 	result, err := db.conn.Exec("DELETE FROM files WHERE path = ?", path)
 	if err != nil {
 		return fmt.Errorf("failed to delete file: %w", err)

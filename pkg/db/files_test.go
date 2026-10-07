@@ -151,7 +151,7 @@ func TestGetFileByID(t *testing.T) {
 	}
 }
 
-func TestDeleteFile(t *testing.T) {
+func TestForgetFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -168,7 +168,7 @@ func TestDeleteFile(t *testing.T) {
 	}
 
 	// Delete file
-	err = db.DeleteFile(path)
+	err = db.ForgetFile(path)
 	if err != nil {
 		t.Fatalf("Failed to delete file: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestDeleteFile(t *testing.T) {
 	}
 
 	// Delete non-existent file should error
-	err = db.DeleteFile("/nonexistent")
+	err = db.ForgetFile("/nonexistent")
 	if err == nil {
 		t.Errorf("Expected error deleting non-existent file")
 	}

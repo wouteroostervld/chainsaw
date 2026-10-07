@@ -212,7 +212,9 @@ chainsaw daemon start         # watch the configured directories for changes
 
 **You rarely need any of these.** Before `chainsaw query` runs, and before
 `--expand calls` looks up what is called, the source files under the current
-directory that are new or modified are indexed and deleted ones are removed.
+directory that are new or modified are indexed, and the index forgets files
+that are gone from disk (reported as `removed file detected: <file>`).
+Chainsaw never deletes or changes a source file.
 A first query on a project that was never indexed just takes a moment longer
 (this repository: about two seconds) and says so on standard error. Results
 never come from stale files. `--no-index` skips the step.
