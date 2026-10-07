@@ -29,11 +29,11 @@ var schema = []string{
 	`CREATE INDEX IF NOT EXISTS idx_files_status ON files(status, queued_at);`,
 
 	// Chunks are the pieces a parsed file is folded into: the file skeleton
-	// and one per definition large enough to fold
+	// and one per definition large enough to fold. Only where they are is
+	// kept; the text stays in the file.
 	`CREATE TABLE IF NOT EXISTS chunks (
     chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,
     file_id INTEGER NOT NULL,
-    content_snippet TEXT NOT NULL,
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL
 );`,

@@ -23,11 +23,12 @@ chainsaw query 'MATCH (f)-[:calls]->(t {name: "Open"}) RETURN f.name, f.file, f.
 ```
 
 `grep` and `outline` work on the files as they are on disk and need no index.
-`query` needs one:
+`query` keeps its own: before it runs, whatever is new or changed under the
+current directory is indexed, so there is nothing to set up and results are
+never stale. For a very large tree, index it once by hand:
 
 ```bash
 chainsaw index .          # parse the source files under a path
-chainsaw daemon start     # optional: keep the index current as files change
 ```
 
 ### What a result looks like
@@ -84,8 +85,8 @@ source files ── tree-sitter ──► definitions, calls, imports ──► 
       └────────────────────────────────────────────────────────► chainsaw grep / outline
 ```
 
-The index lives in `~/.chainsaw/graph.db`. It holds no source of truth: delete
-it and run `chainsaw index` again at any time.
+The index lives in `~/.chainsaw/graph.db`. It holds names, locations and
+edges, no source text, and can be deleted at any time.
 
 ## License
 

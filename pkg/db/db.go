@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,13 +45,19 @@ func Open(cfg Config) (*DB, error) {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	// REGEXP is an operator SQLite leaves to the application
 	registerDriver.Do(func() {
 		sql.Register(driverName, &sqlite3.SQLiteDriver{
 			ConnectHook: func(conn *sqlite3.SQLiteConn) error {
-				return conn.RegisterFunc("regexp", func(pattern, s string) (bool, error) {
+				// REGEXP is an operator SQLite leaves to the application
+				err := conn.RegisterFunc("regexp", func(pattern, s string) (bool, error) {
 					return regexp.MatchString(pattern, s)
 				}, true)
+				if err != nil {
+					return err
+				}
+				// The index holds no source text; code is read from the
+				// files when a query asks for it
+				return conn.RegisterFunc("file_lines", fileLines, false)
 			},
 		})
 	})
@@ -175,4 +182,30 @@ func (db *DB) SetMeta(key, value string) error {
 // RawQuery executes a raw SQL query with args and returns the result rows
 func (db *DB) RawQuery(query string, args ...interface{}) (*sql.Rows, error) {
 	return db.conn.Query(query, args...)
+}
+
+// lineCache holds the lines of the files queries have read code from
+var lineCache = struct {
+	sync.Mutex
+	files map[string][]string
+}{files: make(map[string][]string)}
+
+// fileLines returns lines start to end (1-indexed, inclusive) of a file as it
+// is on disk now, or an empty string when it cannot be read
+func fileLines(path string, start, end int64) string {
+	lineCache.Lock()
+	defer lineCache.Unlock()
+
+	lines, ok := lineCache.files[path]
+	if !ok {
+		if content, err := os.ReadFile(path); err == nil {
+			lines = strings.Split(strings.TrimSuffix(string(content), "\n"), "\n")
+		}
+		lineCache.files[path] = lines
+	}
+	if start < 1 || start > int64(len(lines)) {
+		return ""
+	}
+	end = min(end, int64(len(lines)))
+	return strings.Join(lines[start-1:end], "\n")
 }

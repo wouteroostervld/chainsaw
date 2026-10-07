@@ -24,7 +24,7 @@ func addFile(t *testing.T, db *DB, path string) (fileID, chunkID int64) {
 	if err != nil {
 		t.Fatalf("Failed to upsert file: %v", err)
 	}
-	chunkID, err = db.InsertChunk(fileID, "content of "+path, 1, 10)
+	chunkID, err = db.InsertChunk(fileID, 1, 10)
 	if err != nil {
 		t.Fatalf("Failed to insert chunk: %v", err)
 	}

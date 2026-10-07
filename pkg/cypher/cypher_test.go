@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -10,6 +11,9 @@ import (
 
 	"github.com/wouteroostervld/chainsaw/pkg/db"
 )
+
+// projDir is where the files of the test graph are; results show it as /proj
+var projDir string
 
 // graph builds a small index:
 //
@@ -23,22 +27,36 @@ func graph(t *testing.T) *db.DB {
 	}
 	t.Cleanup(func() { database.Close() })
 
+	// The files exist, so their code can be read back
+	dir := t.TempDir()
 	add := func(path string, defs []db.SymbolDef, refs []db.SymbolRef) {
+		path = strings.Replace(path, "/proj", dir, 1)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		var lines []string
+		for i := 1; i <= 40; i++ {
+			lines = append(lines, fmt.Sprintf("// %s line %d", filepath.Base(path), i))
+		}
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
 		fileID, err := database.UpsertFile(path, 1, "hash")
 		if err != nil {
 			t.Fatal(err)
 		}
-		chunkID, err := database.InsertChunk(fileID, "code of "+path, 1, 40)
+		chunkID, err := database.InsertChunk(fileID, 1, 40)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for i := range defs {
 			defs[i].ChunkID = chunkID
 		}
-		if err := database.StoreFileSymbols(fileID, "/proj", defs, refs); err != nil {
+		if err := database.StoreFileSymbols(fileID, dir, defs, refs); err != nil {
 			t.Fatal(err)
 		}
 	}
+	projDir = dir
 
 	add("/proj/lib/load.go", []db.SymbolDef{
 		{Name: "lib", EntityType: "PACKAGE", Parent: -1, StartLine: 1, EndLine: 40},
@@ -94,7 +112,7 @@ func run(t *testing.T, database *db.DB, query string, opts Options) []string {
 			}
 			parts[i] = fmt.Sprint(v)
 		}
-		out = append(out, strings.Join(parts, " "))
+		out = append(out, strings.ReplaceAll(strings.Join(parts, " "), projDir, "/proj"))
 	}
 	if !strings.Contains(strings.ToUpper(query), "ORDER BY") {
 		sort.Strings(out)
@@ -196,6 +214,16 @@ func TestQueries(t *testing.T) {
 			want:  []string{"log FUNCTION /proj/app/main.go 32-34"},
 		},
 		{
+			name:  "code is read from the file, not the index",
+			query: `MATCH (n {name: "log"}) RETURN n.snippet`,
+			want:  []string{"// main.go line 32\n// main.go line 33\n// main.go line 34"},
+		},
+		{
+			name:  "and can be searched",
+			query: `MATCH (n:FUNCTION) WHERE n.snippet CONTAINS "load.go line 14" RETURN n.name`,
+			want:  []string{"parse"},
+		},
+		{
 			name:  "order, skip and limit",
 			query: `MATCH (n:FUNCTION) RETURN n.name ORDER BY n.name SKIP 1 LIMIT 2`,
 			want:  []string{"Run", "log"},
@@ -220,7 +248,7 @@ func TestOptions(t *testing.T) {
 	database := graph(t)
 
 	// Scoped to a directory: paths that touch it, from either end
-	got := run(t, database, `MATCH (f)-[:calls]->(t) RETURN f.name, t.name`, Options{CWD: "/proj/lib"})
+	got := run(t, database, `MATCH (f)-[:calls]->(t) RETURN f.name, t.name`, Options{CWD: projDir + "/lib"})
 	want := []string{"Load parse", "Run Load", "parse fmt.Println"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("scoped to /proj/lib: got %q, want %q", got, want)

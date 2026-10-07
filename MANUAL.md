@@ -150,7 +150,7 @@ single node.
 | `line`, `end_line`, `lines` | Where the definition starts and ends; `lines` is `"12-40"` |
 | `signature` | The definition up to its body |
 | `container`, `short_name` | The two halves of a method's name |
-| `snippet` | The code of the chunk it is in |
+| `snippet` | The code of the definition, read from the file as it is now |
 
 | Edge | |
 |---|---|
@@ -175,6 +175,7 @@ single node.
 | `--all` | Do not limit results to the current directory |
 | `--limit N` | Rows to return when the query has no `LIMIT` (default 100) |
 | `--expand body\|file\|calls` | Also show the code of the returned nodes |
+| `--no-index` | Query the index as it is, without first indexing what changed in the current directory |
 | `--sql` | Print the SQL the query is translated to |
 
 By default a result must touch the current directory: at least one node of
@@ -209,17 +210,28 @@ chainsaw status               # what is in the index
 chainsaw daemon start         # watch the configured directories for changes
 ```
 
-`index` parses each source file and records its definitions, calls and
-imports. Unchanged files are skipped, so running it again is cheap. It takes
-seconds: this repository in about four, the Linux kernel's `fs/ext4` (70,000
-lines) in about two.
+**You rarely need any of these.** Before `chainsaw query` runs, and before
+`--expand calls` looks up what is called, the source files under the current
+directory that are new or modified are indexed and deleted ones are removed.
+A first query on a project that was never indexed just takes a moment longer
+(this repository: about two seconds) and says so on standard error. Results
+never come from stale files. `--no-index` skips the step.
 
-The daemon is optional. It watches the `include` directories of your
-configuration and re-indexes files as they change; without it, run
-`chainsaw index` when you want the graph refreshed. Files that have been
-deleted leave the index the next time the daemon sees them queued.
+A file counts as modified when its modification time differs from when it
+was indexed. When more than 1,000 files need indexing the step is skipped
+with a note, because it would take too long to do in passing; run
+`chainsaw index .` once for a tree that size.
 
-The index is `~/.chainsaw/graph.db`. It can be deleted at any time.
+`chainsaw index <path>` does the same by hand, for a directory or a single
+file, with no limit, and for paths outside the current directory. It takes
+seconds: the Linux kernel's `fs/ext4` (70,000 lines) in about two.
+
+The daemon is optional as well. It watches the `include` directories of your
+configuration and re-indexes files as they change.
+
+The index is `~/.chainsaw/graph.db`. It holds names, locations and edges, and
+no source text: the code a query shows (`snippet`, `--expand`) is read from
+the files when it is asked for. It can be deleted at any time.
 
 ## The graph
 
@@ -293,8 +305,8 @@ ignored.
 ## Troubleshooting
 
 **`query` returns nothing.** Results are limited to the current directory;
-try `--all`. Check `chainsaw status` to see that the files are indexed, and
-`chainsaw index .` if not.
+try `--all`. If a note says there were too many files to index in passing,
+run `chainsaw index .` once.
 
 **A call is missing from the graph.** In Go, check that the package compiles
 and that `go` is on the PATH. In other languages, a method call on a variable

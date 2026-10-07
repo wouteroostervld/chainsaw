@@ -12,7 +12,7 @@ read-only:
 |---|---|---|
 | `chainsaw grep <pattern> [path...]` | Where is this text, and which definition is it inside? | No |
 | `chainsaw outline <file>` | What is in this file, without reading it? | No |
-| `chainsaw query '<cypher>'` | Who calls this? What does it call? What implements it? | Yes |
+| `chainsaw query '<cypher>'` | Who calls this? What does it call? What implements it? | Yes, kept current automatically |
 
 Run them from inside the project. Parsed languages: Go, Python, JavaScript,
 TypeScript, Rust, Java, C, C++, Ruby.
@@ -94,8 +94,9 @@ call through an interface points at the interface's method
 (`Database.UpsertFile`), so to find the callers of an implementation ask for
 `[:calls|may_call]`.
 
-If a query returns nothing where you expect results, run `chainsaw status`;
-the project may need `chainsaw index .` (it takes seconds).
+The index needs no care: before a query runs, files under the current
+directory that are new or changed are indexed. Only if a note says there were
+too many files to index in passing, run `chainsaw index .` once.
 
 ## --expand: show the code
 

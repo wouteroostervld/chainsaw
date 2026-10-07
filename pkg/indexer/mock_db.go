@@ -21,7 +21,6 @@ type MockDatabase struct {
 // MockChunk is a chunk the indexer stored
 type MockChunk struct {
 	ID        int64
-	Content   string
 	StartLine int
 	EndLine   int
 }
@@ -35,9 +34,9 @@ func (m *MockDatabase) UpsertFile(path string, modTime int64, contentHash string
 	return 1, nil
 }
 
-func (m *MockDatabase) InsertChunk(fileID int64, contentSnippet string, startLine, endLine int) (int64, error) {
+func (m *MockDatabase) InsertChunk(fileID int64, startLine, endLine int) (int64, error) {
 	id := int64(len(m.Chunks) + 1)
-	m.Chunks = append(m.Chunks, MockChunk{ID: id, Content: contentSnippet, StartLine: startLine, EndLine: endLine})
+	m.Chunks = append(m.Chunks, MockChunk{ID: id, StartLine: startLine, EndLine: endLine})
 	return id, nil
 }
 

@@ -49,8 +49,8 @@ var nodeProps = map[string]string{
 	"signature":   "d%[1]d.signature",
 	"container":   "d%[1]d.container",
 	"short_name":  "d%[1]d.name",
-	"snippet":     "c%[1]d.content_snippet",
-	"code":        "c%[1]d.content_snippet",
+	"snippet":     "file_lines(f%[1]d.path, d%[1]d.start_line, d%[1]d.end_line)",
+	"code":        "file_lines(f%[1]d.path, d%[1]d.start_line, d%[1]d.end_line)",
 }
 
 // summaryProps are what a bare node variable in RETURN stands for
@@ -191,8 +191,7 @@ func (t *transpiler) nodeConstraints(i int) ([]string, error) {
 // nodeJoins joins what is known about node i beyond the entity itself
 func nodeJoins(i int) string {
 	return fmt.Sprintf(`LEFT JOIN symbol_defs d%[1]d ON d%[1]d.entity_id = n%[1]d.id
-LEFT JOIN files f%[1]d ON f%[1]d.id = d%[1]d.file_id
-LEFT JOIN chunks c%[1]d ON c%[1]d.chunk_id = n%[1]d.chunk_id AND n%[1]d.chunk_id != 0`, i)
+LEFT JOIN files f%[1]d ON f%[1]d.id = d%[1]d.file_id`, i)
 }
 
 // paths builds a recursive table for each variable-length edge: the pairs of

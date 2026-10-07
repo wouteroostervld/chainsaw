@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -47,18 +46,16 @@ class Calc:
 		t.Errorf("file upserted %d times, old chunks deleted %d times, want 1 and 1", mockDB.UpsertFileCount, mockDB.DeleteChunksCount)
 	}
 
-	// Skeleton, add, Calc, Calc.area, Calc.square
-	if len(mockDB.Chunks) != 5 {
-		t.Fatalf("got %d chunks, want 5", len(mockDB.Chunks))
+	// Where the chunks are: the file, add, Calc, Calc.area, Calc.square. Their
+	// text is not stored.
+	wantChunks := [][2]int{{1, 24}, {4, 9}, {12, 23}, {13, 17}, {19, 23}}
+	if len(mockDB.Chunks) != len(wantChunks) {
+		t.Fatalf("got %d chunks, want %d", len(mockDB.Chunks), len(wantChunks))
 	}
-	skeleton := mockDB.Chunks[0].Content
-	for _, stub := range []string{"def add(a, b): # ... chunk: lines 4-9", "class Calc: # ... chunk: lines 12-23"} {
-		if !strings.Contains(skeleton, stub) {
-			t.Errorf("skeleton does not contain %q:\n%s", stub, skeleton)
+	for i, want := range wantChunks {
+		if c := mockDB.Chunks[i]; c.StartLine != want[0] || c.EndLine != want[1] {
+			t.Errorf("chunk %d = lines %d-%d, want %d-%d", i, c.StartLine, c.EndLine, want[0], want[1])
 		}
-	}
-	if add := mockDB.Chunks[1]; add.StartLine != 4 || add.EndLine != 9 || !strings.Contains(add.Content, "total = a + b") {
-		t.Errorf("add chunk = lines %d-%d:\n%s", add.StartLine, add.EndLine, add.Content)
 	}
 
 	// Each definition is an entity in the chunk that holds it; the module comes first

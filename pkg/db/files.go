@@ -11,7 +11,7 @@ import (
 type File struct {
 	ID           int64
 	Path         string
-	LastModTime  int64  // Unix timestamp
+	LastModTime  int64  // Modification time of the file when it was indexed, in nanoseconds
 	ContentHash  string // SHA256 hex
 	IndexedAt    time.Time
 	Status       string // pending, processing, indexed, failed
@@ -344,4 +344,34 @@ GROUP BY status
 	}
 
 	return counts, rows.Err()
+}
+
+// IndexedFile is what the index remembers of a file to tell whether it changed
+type IndexedFile struct {
+	ID      int64
+	ModTime int64 // Nanoseconds
+}
+
+// IndexedFiles returns the files at or under a path that are in the index,
+// by path
+func (db *DB) IndexedFiles(root string) (map[string]IndexedFile, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, path, last_mod_time FROM files
+		WHERE path = ? OR substr(path, 1, length(?)) = ?
+	`, root, root+"/", root+"/")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query indexed files: %w", err)
+	}
+	defer rows.Close()
+
+	files := make(map[string]IndexedFile)
+	for rows.Next() {
+		var path string
+		var f IndexedFile
+		if err := rows.Scan(&f.ID, &path, &f.ModTime); err != nil {
+			return nil, fmt.Errorf("failed to scan indexed file: %w", err)
+		}
+		files[path] = f
+	}
+	return files, rows.Err()
 }

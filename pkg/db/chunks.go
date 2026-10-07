@@ -2,12 +2,12 @@ package db
 
 import "fmt"
 
-// InsertChunk stores a chunk of a file and returns its ID
-func (db *DB) InsertChunk(fileID int64, contentSnippet string, startLine, endLine int) (int64, error) {
+// InsertChunk records where a chunk of a file is and returns its ID
+func (db *DB) InsertChunk(fileID int64, startLine, endLine int) (int64, error) {
 	result, err := db.conn.Exec(`
-		INSERT INTO chunks (file_id, content_snippet, start_line, end_line)
-		VALUES (?, ?, ?, ?)
-	`, fileID, contentSnippet, startLine, endLine)
+		INSERT INTO chunks (file_id, start_line, end_line)
+		VALUES (?, ?, ?)
+	`, fileID, startLine, endLine)
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert chunk: %w", err)
 	}

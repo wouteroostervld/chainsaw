@@ -13,7 +13,7 @@ type Database interface {
 	MarkFileFailed(fileID int64, errorMsg string, retryCount int) error
 
 	// What is derived from a file
-	InsertChunk(fileID int64, contentSnippet string, startLine, endLine int) (int64, error)
+	InsertChunk(fileID int64, startLine, endLine int) (int64, error)
 	DeleteChunksForFile(fileID int64) error
 	StoreFileSymbols(fileID int64, root string, defs []SymbolDef, refs []SymbolRef) error
 }

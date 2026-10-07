@@ -67,7 +67,8 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 	}
 
 	hash := fmt.Sprintf("%x", sha256.Sum256(content))
-	fileID, err := idx.db.UpsertFile(filePath, info.ModTime().Unix(), hash)
+	// Nanoseconds, so an edit within the second it was indexed is still seen
+	fileID, err := idx.db.UpsertFile(filePath, info.ModTime().UnixNano(), hash)
 	if err != nil {
 		return fmt.Errorf("failed to upsert file: %w", err)
 	}
@@ -84,7 +85,7 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error {
 
 	chunkIDs := make([]int64, len(parsed.Chunks))
 	for i, c := range parsed.Chunks {
-		if chunkIDs[i], err = idx.db.InsertChunk(fileID, c.Content, c.StartLine, c.EndLine); err != nil {
+		if chunkIDs[i], err = idx.db.InsertChunk(fileID, c.StartLine, c.EndLine); err != nil {
 			return fmt.Errorf("failed to insert chunk: %w", err)
 		}
 	}
