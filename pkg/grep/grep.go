@@ -11,12 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
-
-	"go.elara.ws/pcre"
+	"sync"
 
 	"github.com/wouteroostervld/chainsaw/pkg/chunker"
+	"github.com/wouteroostervld/chainsaw/pkg/pcre"
 )
 
 // maxFileSize is the largest file that is searched
@@ -64,22 +65,24 @@ func Search(pattern string, paths []string, opts Options) ([]File, error) {
 	if opts.IgnoreCase {
 		flags |= pcre.Caseless
 	}
-	// The library frees a pattern when it is garbage collected; closing it
-	// here as well would free it twice
-	re, err := pcre.CompileOpts(pattern, flags)
+	re, err := pcre.Compile(pattern, flags)
 	if err != nil {
 		return nil, fmt.Errorf("invalid pattern: %w", err)
 	}
+	defer re.Close()
 
 	exclude := make(map[string]bool, len(opts.Exclude))
 	for _, name := range opts.Exclude {
 		exclude[strings.TrimSuffix(name, "/")] = true
 	}
 
-	var files []File
+	// Matching is quick and done in order, with the one compiled pattern.
+	// Finding the definitions around the matches means parsing each file
+	// that has any, which is the slow part and is done in parallel.
+	var found []*candidate
 	search := func(path string) {
-		if f, ok := searchFile(re, path); ok {
-			files = append(files, f)
+		if c := matchFile(re, path); c != nil {
+			found = append(found, c)
 		}
 	}
 
@@ -113,24 +116,51 @@ func Search(pattern string, paths []string, opts Options) ([]File, error) {
 			return nil, err
 		}
 	}
+
+	files := make([]File, len(found))
+	var wg sync.WaitGroup
+	next := make(chan int)
+	for w := 0; w < runtime.NumCPU(); w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				files[i] = found[i].group()
+			}
+		}()
+	}
+	for i := range found {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
 	return files, nil
 }
 
-// searchFile returns the matches in a file; false when there are none or the
-// file is not text
-func searchFile(re *pcre.Regexp, path string) (File, bool) {
+// candidate is a file with matches, before its definitions are known
+type candidate struct {
+	path    string
+	content []byte
+	numbers []int // The lines with a match, in order
+}
+
+// matchFile returns the lines of a file that match; nil when there are none
+// or the file is not text
+func matchFile(re *pcre.Regexp, path string) *candidate {
 	info, err := os.Stat(path)
 	if err != nil || info.Size() > maxFileSize || info.Size() == 0 {
-		return File{}, false
+		return nil
 	}
 	content, err := os.ReadFile(path)
 	if err != nil || bytes.IndexByte(content[:min(len(content), 8000)], 0) >= 0 {
-		return File{}, false
+		return nil
 	}
 
-	matches := re.FindAllIndex(content, -1)
-	if len(matches) == 0 {
-		return File{}, false
+	// A pattern that gives up on a file, by running into a match limit, is
+	// treated as not matching it
+	matches, err := re.FindAllIndex(content)
+	if err != nil || len(matches) == 0 {
+		return nil
 	}
 
 	// The lines the matches start on
@@ -143,13 +173,18 @@ func searchFile(re *pcre.Regexp, path string) (File, bool) {
 			numbers = append(numbers, line)
 		}
 	}
-	lines := bytes.Split(content, []byte{'\n'})
+	return &candidate{path: path, content: content, numbers: numbers}
+}
 
-	parsed, _ := chunker.Parse(path, content, 0)
+// group parses the file and groups its matching lines by the definition
+// around them
+func (c *candidate) group() File {
+	lines := bytes.Split(c.content, []byte{'\n'})
+	parsed, _ := chunker.Parse(c.path, c.content, 0)
 
-	file := File{Path: path}
+	file := File{Path: c.path}
 	groups := make(map[int]int) // Symbol index -> index into file.Groups
-	for _, n := range numbers {
+	for _, n := range c.numbers {
 		symbol := -1
 		if parsed != nil {
 			symbol = parsed.SymbolAt(n)
@@ -172,5 +207,5 @@ func searchFile(re *pcre.Regexp, path string) (File, bool) {
 	sort.SliceStable(file.Groups, func(i, j int) bool {
 		return file.Groups[i].Lines[0].Number < file.Groups[j].Lines[0].Number
 	})
-	return file, true
+	return file
 }

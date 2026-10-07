@@ -65,7 +65,9 @@ cd chainsaw
 make install
 ```
 
-Needs Go 1.24.7+ and a C compiler (for SQLite and the tree-sitter grammars).
+Needs Go 1.24.7+, a C compiler (for SQLite and the tree-sitter grammars) and
+the PCRE2 development files (`pcre2-devel` on Fedora, `libpcre2-dev` on
+Debian and Ubuntu).
 The `go` command must be on the PATH for exact Go call resolution into
 dependencies.
 
@@ -91,5 +93,6 @@ MIT, see [LICENSE](LICENSE).
 
 ## Credits
 
-Built with [tree-sitter](https://tree-sitter.github.io/), SQLite, PCRE2 and
+Built with [tree-sitter](https://tree-sitter.github.io/), SQLite,
+[PCRE2](https://www.pcre.org/) and
 [fsnotify](https://github.com/fsnotify/fsnotify).

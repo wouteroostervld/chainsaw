@@ -24,8 +24,9 @@ cd chainsaw
 make install          # builds to ~/.local/bin/chainsaw
 ```
 
-Needs Go 1.24.7+ and a C compiler. Nothing else: there is no model to pull
-and no service to run. `grep` and `outline` work straight away; `query`
+Needs Go 1.24.7+, a C compiler and the PCRE2 development files
+(`pcre2-devel` on Fedora, `libpcre2-dev` on Debian and Ubuntu). Nothing else:
+there is no model to pull and no service to run. `grep` and `outline` work straight away; `query`
 needs `chainsaw index <path>` first.
 
 ## grep
