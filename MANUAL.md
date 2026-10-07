@@ -204,7 +204,7 @@ chainsaw query --expand file 'MATCH (f)-[:calls]->(t {name: "nearest"}) RETURN f
 ## The index
 
 ```bash
-chainsaw index <path>         # parse and record the files under a path
+chainsaw index <path>...      # parse and record files, or the files under directories
 chainsaw index --force <path> # also files that have not changed
 chainsaw status               # what is in the index
 chainsaw daemon start         # watch the configured directories for changes
@@ -222,9 +222,22 @@ was indexed. When more than 1,000 files need indexing the step is skipped
 with a note, because it would take too long to do in passing; run
 `chainsaw index .` once for a tree that size.
 
-`chainsaw index <path>` does the same by hand, for a directory or a single
-file, with no limit, and for paths outside the current directory. It takes
-seconds: the Linux kernel's `fs/ext4` (70,000 lines) in about two.
+`chainsaw index` does the same by hand, with no limit and for paths outside
+the current directory. It takes seconds: the Linux kernel's `fs/ext4` (70,000
+lines) in about two. It accepts any number of files and directories, and
+reads more from standard input when given `-`, so it fits in a pipeline:
+
+```bash
+chainsaw index pkg cmd/chainsaw/main.go
+git diff --name-only | chainsaw index -
+find . -name '*.go' -newer Makefile -print0 | xargs -0 chainsaw index
+find . -name '*.py' -print0 | chainsaw index -0 -
+```
+
+A file named directly is indexed whatever the configuration excludes; one
+that is not in a parseable language is passed over, so a pipeline does not
+have to filter. A path that does not exist is reported, the rest is still
+indexed, and the exit status is 1.
 
 The daemon is optional as well. It watches the `include` directories of your
 configuration and re-indexes files as they change.
