@@ -4,8 +4,12 @@
 
 Chainsaw parses your source files and answers three kinds of question
 without reading whole files: *where is this text, and what is it inside of*,
-*what does this file look like*, and *what calls what*. No embeddings, no
-model, no GPU: indexing is parsing, and takes seconds.
+*what does this file look like*, and *what calls what*. That needs no
+embeddings, no model and no GPU: indexing is parsing, and takes seconds.
+
+A fourth question, *where is the code that does this*, does need a model.
+Search by meaning is there for who wants it, as a separate kind of index that
+is off until you switch it on.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -20,6 +24,9 @@ chainsaw outline pkg/indexer/indexer.go
 
 # The code graph: who calls this, what implements that
 chainsaw query 'MATCH (f)-[:calls]->(t {name: "Open"}) RETURN f.name, f.file, f.lines'
+
+# Search by meaning (off by default, see below)
+chainsaw search "where are retries handled"
 ```
 
 `grep` and `outline` work on the files as they are on disk and need no index.
@@ -43,13 +50,46 @@ fs/ext4/super.c
   FUNCTION ext4_check_feature_compatibility  (lines 4713-4815): 2
 ```
 
-Both `grep` and `query` can show the code around a result with `--expand`:
+`grep`, `query` and `search` can show the code around a result with `--expand`:
 
 | | |
 |---|---|
 | `--expand body` | the whole definition around each result |
 | `--expand file` | the file folded to signatures, with those definitions in full |
 | `--expand calls` | as `file`, and also what those definitions call |
+
+## Kinds of index
+
+What is indexed is made of parts that work alone and together. Each can be
+switched on or off, for everything or for one project:
+
+| Kind | Holds | Used by | Default |
+|---|---|---|---|
+| `graph` | Definitions, calls, imports, from the syntax tree | `query`, `--expand calls` | on |
+| `embeddings` | A vector per chunk of code, from a model | `search` | **off** |
+
+Embeddings cost a request to a model for every file, so they stay off until
+you say so and name a model in `~/.chainsaw/config.yaml`:
+
+```yaml
+profiles:
+  default:
+    index:
+      embeddings: true          # everywhere, or leave this out and...
+    embeddings:
+      model: nomic-embed-text   # Ollama on localhost, or any OpenAI-compatible server
+```
+
+...switch them on for just the projects that want them, with a `.config.yaml`
+in the project:
+
+```yaml
+index:
+  embeddings: true
+```
+
+A command only builds the kind of index it uses: `query` never waits for a
+model. See [Kinds of index](MANUAL.md#kinds-of-index) in the manual.
 
 ## Languages
 
@@ -80,13 +120,16 @@ dependencies.
 ## How it works
 
 ```
-source files ── tree-sitter ──► definitions, calls, imports ──► SQLite graph ──► chainsaw query
-      │              (+ go/types for Go)
-      └────────────────────────────────────────────────────────► chainsaw grep / outline
+source files ── tree-sitter ─┬► definitions, calls, imports ──► graph ─────────────► chainsaw query
+      │       (+ go/types    │
+      │         for Go)      └► chunks ── model ──► embeddings (optional) ──► chainsaw search
+      │
+      └─────────────────────────────────────────────────────────────────────► chainsaw grep / outline
 ```
 
-The index lives in `~/.chainsaw/graph.db`. It holds names, locations and
-edges, no source text, and can be deleted at any time.
+The index lives in `~/.chainsaw/graph.db`. It holds names, locations, edges
+and, when switched on, vectors. It holds no source text, and can be deleted
+at any time.
 
 ## License
 
@@ -95,5 +138,6 @@ MIT, see [LICENSE](LICENSE).
 ## Credits
 
 Built with [tree-sitter](https://tree-sitter.github.io/), SQLite,
+[sqlite-vec](https://github.com/asg017/sqlite-vec),
 [PCRE2](https://www.pcre.org/) and
 [fsnotify](https://github.com/fsnotify/fsnotify).

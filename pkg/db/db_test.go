@@ -77,6 +77,36 @@ func TestOpen_OtherSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestOpen_UpgradesSchema3_0(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+
+	db, err := Open(Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	fileID, err := db.UpsertFile("/src/a.go", 42, "hash")
+	if err != nil {
+		t.Fatalf("Failed to upsert file: %v", err)
+	}
+	if err := db.SetMeta(MetaKeySchemaVersion, "3.0.0"); err != nil {
+		t.Fatalf("Failed to set meta: %v", err)
+	}
+	db.Close()
+
+	// What 3.0.0 indexed is the graph, and does not need indexing again
+	db, err = Open(Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("Open refused a 3.0.0 database: %v", err)
+	}
+	defer db.Close()
+	if version, _ := db.GetMeta(MetaKeySchemaVersion); version != SchemaVersion {
+		t.Errorf("schema version = %s, want %s", version, SchemaVersion)
+	}
+	if modules, _ := db.FileModules(fileID); len(modules) != 1 || modules["graph"] != 42 {
+		t.Errorf("modules after the upgrade = %v, want graph at 42", modules)
+	}
+}
+
 func TestRawQuery_Regexp(t *testing.T) {
 	db, err := Open(Config{Path: filepath.Join(t.TempDir(), "test.db")})
 	if err != nil {

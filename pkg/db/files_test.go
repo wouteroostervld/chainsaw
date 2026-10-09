@@ -338,3 +338,55 @@ func TestHasFileChanged(t *testing.T) {
 		t.Errorf("File with different hash should be changed")
 	}
 }
+
+func TestFileModules(t *testing.T) {
+	db := openSymbolsDB(t)
+	a, _ := addFile(t, db, "/src/a.go")
+	b, _ := addFile(t, db, "/src/sub/b.go")
+	addFile(t, db, "/srcother/c.go")
+
+	for _, set := range []struct {
+		file    int64
+		module  string
+		modTime int64
+	}{{a, "graph", 5}, {a, "embeddings", 4}, {a, "graph", 6}, {b, "graph", 7}} {
+		if err := db.SetFileModule(set.file, set.module, set.modTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	modules, err := db.FileModules(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modules) != 2 || modules["graph"] != 6 || modules["embeddings"] != 4 {
+		t.Errorf("modules of a = %v", modules)
+	}
+
+	// A file is listed whether or not any kind of index holds it yet
+	files, err := db.IndexedFiles("/src")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || files["/src/a.go"].Modules["graph"] != 6 || files["/src/sub/b.go"].Modules["graph"] != 7 {
+		t.Errorf("files under /src = %v", files)
+	}
+	if files, _ := db.IndexedFiles("/srcother"); len(files) != 1 || len(files["/srcother/c.go"].Modules) != 0 {
+		t.Errorf("files under /srcother = %v", files)
+	}
+
+	if err := db.ClearFileModule(a, "embeddings"); err != nil {
+		t.Fatal(err)
+	}
+	if counts, _ := db.CountFilesByModule(); counts["graph"] != 2 || counts["embeddings"] != 0 {
+		t.Errorf("counts = %v", counts)
+	}
+
+	// Forgetting a file forgets what held it
+	if err := db.ForgetFile("/src/a.go"); err != nil {
+		t.Fatal(err)
+	}
+	if modules, _ := db.FileModules(a); len(modules) != 0 {
+		t.Errorf("modules of a forgotten file = %v", modules)
+	}
+}

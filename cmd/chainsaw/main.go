@@ -1,15 +1,19 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
 	"github.com/wouteroostervld/chainsaw/pkg/config"
 	"github.com/wouteroostervld/chainsaw/pkg/db"
+	"github.com/wouteroostervld/chainsaw/pkg/embed"
+	"github.com/wouteroostervld/chainsaw/pkg/indexer"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 const usage = `Usage: chainsaw <command>
 
@@ -17,10 +21,11 @@ Looking at code:
   grep <pattern> [path...]   Search with a regular expression; shows the definition around each match
   outline <file>             Show a file folded to its signatures
   query <cypher>             Query the code graph: definitions, calls, imports
+  search <words>             Search by meaning (needs the embeddings index, which is off by default)
 
 Keeping the index:
   index <path>               Index the source files under a path
-  status                     Show what is in the index
+  status                     Show what is in the index, and which kinds of index are on here
   daemon start               Watch for changes and keep the index current
 
 Run a command with --help for its options.`
@@ -38,6 +43,8 @@ func main() {
 		handleOutline(os.Args[2:])
 	case "query":
 		handleQuery(os.Args[2:])
+	case "search":
+		handleSearch(os.Args[2:])
 	case "graph":
 		// "graph query" is the older spelling of "query"
 		if len(os.Args) > 2 && os.Args[2] == "query" {
@@ -89,15 +96,102 @@ func workingDir() string {
 	return abs
 }
 
-// activeProfile returns the active profile of the user's configuration, or
-// defaults when there is none
-func activeProfile() *config.Profile {
-	configPath := filepath.Join(os.Getenv("HOME"), ".chainsaw", "config.yaml")
-	cfg, err := config.LoadGlobalConfigFromPath(configPath, &config.RealFileSystem{})
-	if err == nil {
-		if profile := cfg.Profiles[cfg.ActiveProfile]; profile != nil {
-			return profile
-		}
-	}
-	return &config.Profile{Exclude: []string{"node_modules", "vendor", "__pycache__"}}
+// configPath is where the user's configuration is
+func configPath() string {
+	return filepath.Join(os.Getenv("HOME"), ".chainsaw", "config.yaml")
 }
+
+// loadProfile returns the active profile of the user's configuration, or
+// defaults when there is no configuration. One that is there but cannot be
+// used is an error: carrying on with defaults would quietly switch off what
+// it switches on.
+func loadProfile() (*config.Profile, error) {
+	cfg, err := config.LoadGlobalConfigFromPath(configPath(), &config.RealFileSystem{})
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return &config.Profile{Exclude: []string{"node_modules", "vendor", "__pycache__"}}, nil
+	case err != nil:
+		return nil, fmt.Errorf("%s: %w", configPath(), err)
+	}
+	return cfg.Profiles[cfg.ActiveProfile], nil
+}
+
+// activeProfile returns the active profile for a command that only needs to
+// know what to skip, and can do without
+func activeProfile() *config.Profile {
+	profile, err := loadProfile()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "note: %v; using defaults\n", err)
+		return &config.Profile{Exclude: []string{"node_modules", "vendor", "__pycache__"}}
+	}
+	return profile
+}
+
+// settings is the configuration as the indexing commands use it
+type settings struct {
+	profile *config.Profile
+	kinds   *config.IndexResolver // Which kinds of index are on, by file
+}
+
+func loadSettings() (*settings, error) {
+	profile, err := loadProfile()
+	if err != nil {
+		return nil, err
+	}
+	kinds, err := config.NewIndexResolver(profile, &config.RealFileSystem{})
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", configPath(), err)
+	}
+	return &settings{profile: profile, kinds: kinds}, nil
+}
+
+// embedder returns the client for the configured embedding model, or nil
+// when none is configured
+func (s *settings) embedder() (*embed.Client, error) {
+	e := s.profile.EmbeddingSettings()
+	if e.Model == "" {
+		return nil, nil
+	}
+	client, err := embed.New(embed.Config{Provider: e.Provider, BaseURL: e.BaseURL, APIKey: e.APIKey, Model: e.Model})
+	if err != nil {
+		return nil, fmt.Errorf("%s: embeddings: %w", configPath(), err)
+	}
+	return client, nil
+}
+
+// indexer returns the indexer with every kind of index there is, each
+// switched on or off per file by the configuration. With kinds named, it
+// works on those only.
+func (s *settings) indexer(database *db.DB, only ...string) (*indexer.Indexer, error) {
+	client, err := s.embedder()
+	if err != nil {
+		return nil, err
+	}
+	// A nil client must be a nil interface for the module to see it is missing
+	var embedder indexer.Embedder
+	if client != nil {
+		embedder = client
+	}
+
+	idx := indexer.New(database, s.kinds.For, indexer.NewGraph(database), indexer.NewEmbeddings(database, embedder))
+	if len(only) > 0 {
+		idx = idx.Only(only...)
+	}
+	return idx, nil
+}
+
+// embeddingsHelp says how to switch the embeddings index on
+const embeddingsHelp = `The embeddings index is off by default: it asks a model for a vector for
+every chunk of code, which is slow and may cost money. To switch it on, say
+which model to use in ~/.chainsaw/config.yaml:
+
+  profiles:
+    default:
+      index:
+        embeddings: true          # everywhere; or leave this out and put
+                                  # "index: {embeddings: true}" in the
+                                  # .config.yaml of the projects that want it
+      embeddings:
+        model: nomic-embed-text   # served by Ollama on localhost, or with
+        # base_url: https://api.openai.com/v1    any OpenAI-compatible server
+        # api_key: ...`

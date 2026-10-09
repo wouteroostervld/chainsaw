@@ -1,7 +1,9 @@
 package db
 
 // Database is the interface for the database operations of the indexer and
-// its worker. This enables dependency injection and mocking for testing
+// its worker: the files it knows and which kinds of index hold them. What a
+// kind of index stores is behind an interface of its own, next to the code
+// that fills it. This enables dependency injection and mocking for testing
 type Database interface {
 	// File registry and work queue
 	UpsertFile(path string, modTime int64, contentHash string) (int64, error)
@@ -12,10 +14,10 @@ type Database interface {
 	MarkFileIndexed(fileID int64) error
 	MarkFileFailed(fileID int64, errorMsg string, retryCount int) error
 
-	// What is derived from a file
-	InsertChunk(fileID int64, startLine, endLine int) (int64, error)
-	DeleteChunksForFile(fileID int64) error
-	StoreFileSymbols(fileID int64, root string, defs []SymbolDef, refs []SymbolRef) error
+	// Which kinds of index hold a file
+	FileModules(fileID int64) (map[string]int64, error)
+	SetFileModule(fileID int64, module string, modTime int64) error
+	ClearFileModule(fileID int64, module string) error
 }
 
 // Ensure DB implements Database interface

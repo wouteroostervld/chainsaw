@@ -121,6 +121,18 @@ func (db *DB) initSchema() error {
 		}
 	case err != nil:
 		return fmt.Errorf("failed to read schema version: %w", err)
+	case version == "3.0.0":
+		// 3.1.0 adds what is kept per kind of index. What 3.0.0 indexed is
+		// the graph.
+		if _, err := tx.Exec(`
+			INSERT OR IGNORE INTO file_modules (file_id, module, mod_time)
+			SELECT id, 'graph', last_mod_time FROM files WHERE status = 'indexed'
+		`); err != nil {
+			return fmt.Errorf("failed to upgrade schema: %w", err)
+		}
+		if _, err := tx.Exec("UPDATE meta SET value = ? WHERE key = ?", SchemaVersion, MetaKeySchemaVersion); err != nil {
+			return fmt.Errorf("failed to upgrade schema: %w", err)
+		}
 	case version != SchemaVersion:
 		return fmt.Errorf("database %s has schema %s, this version needs %s; remove it and index again", db.path, version, SchemaVersion)
 	}

@@ -1,63 +1,57 @@
 # Chainsaw Global Configuration
 # Location: ~/.chainsaw/config.yaml
+#
+# All of this is optional: without a configuration file chainsaw keeps the
+# code graph and skips node_modules, vendor and __pycache__.
 
-version: "2.1"
+version: "3"
 
 # The active profile to use
-active_profile: "coding_heavy"
+active_profile: "default"
 
 profiles:
-  # High-accuracy profile for code projects
-  coding_heavy:
-    # --- Directory Indexing Scope ---
-    # Paths to recursively index (daemon will watch these)
+  default:
+    # --- Where ---
+    # Directories the daemon watches
     include:
-      - "~/go/src/github.com/myproject"
-      - "~/projects/work"
-    
-    # Directory patterns to skip (glob patterns)
+      - "~/projects"
+
+    # Directory names skipped by grep, index and the daemon
     exclude:
       - "node_modules"
-      - ".git"
+      - "vendor"
       - "build"
       - "dist"
-      - "*.egg-info"
-    
-    # --- File-Level Filtering (Regex on absolute paths) ---
-    # Blacklist: Files matching these patterns are REJECTED (applied first)
-    blacklist:
-      - ".*\\.secret$"           # Reject all .secret files
-      - ".*_test\\.go$"          # Reject Go test files
-      - ".*\\.pyc$"              # Reject Python bytecode
-      - ".*/\\..*"               # Reject hidden files
-    
-    # Whitelist: EXCEPTIONS to blacklist (allows through even if blacklisted)
-    whitelist:
-      - ".*important\\.secret$"  # Allow important.secret files
-      - ".*/\\.gitignore$"       # Allow .gitignore files
-    
-    # --- Embedding Settings ---
-    embedding_model: "nomic-embed-text"
-    chunk_size: 512
-    overlap: 64
-    
 
-  # Fast profile for note-taking
-  notes_fast:
-    include:
-      - "~/Documents/ObsidianVault"
-      - "~/Notes"
-    
-    exclude:
-      - ".obsidian"
-      - ".trash"
-    
+    # Files never indexed (regular expressions on the absolute path) ...
     blacklist:
-      - ".*\\.tmp$"
-      - ".*\\.bak$"
-    
+      - ".*\\.min\\.js$"
+      - ".*\\.pb\\.go$"
+    # ... except these
     whitelist: []
-    
-    embedding_model: "all-minilm"
-    chunk_size: 1024
-    overlap: 128
+
+    # --- What ---
+    # The kinds of index to keep. Each works alone; a kind left out keeps
+    # its default. A project can switch them for itself in a .config.yaml.
+    index:
+      graph: true        # definitions, calls, imports: for "chainsaw query"
+      embeddings: false  # a vector per chunk of code: for "chainsaw search"
+
+    # The model that makes embeddings. Only needed, and only used, where the
+    # embeddings index is on. Naming a model switches nothing on.
+    embeddings:
+      model: "nomic-embed-text"            # served by Ollama on localhost
+      # base_url: "http://localhost:11434"
+
+  # A profile that embeds everything, with a hosted model
+  semantic:
+    include:
+      - "~/projects"
+    exclude:
+      - "node_modules"
+    index:
+      embeddings: true
+    embeddings:
+      base_url: "https://api.openai.com/v1"   # any OpenAI-compatible server
+      api_key: "sk-..."
+      model: "text-embedding-3-small"

@@ -107,11 +107,7 @@ func (w *IndexWorker) processFile(ctx context.Context, file *db.File) {
 	// A file that is gone from disk has nothing left to index; the index
 	// forgets it
 	if _, err := os.Stat(file.Path); os.IsNotExist(err) {
-		if err := w.db.DeleteChunksForFile(file.ID); err != nil {
-			slog.Error("Failed to forget chunks of removed file", "file", file.Path, "error", err)
-			return
-		}
-		if err := w.db.ForgetFile(file.Path); err != nil {
+		if err := w.indexer.ForgetFile(file.ID, file.Path); err != nil {
 			slog.Error("Failed to forget removed file", "file", file.Path, "error", err)
 			return
 		}
@@ -119,8 +115,8 @@ func (w *IndexWorker) processFile(ctx context.Context, file *db.File) {
 		return
 	}
 
-	// Do the actual indexing
-	if err := w.indexer.IndexFile(ctx, file.Path); err != nil {
+	// Do the actual indexing: every kind of index that is switched on for the file
+	if err := w.indexer.IndexFile(ctx, file.Path, false); err != nil {
 		w.handleFailure(file, err)
 		return
 	}

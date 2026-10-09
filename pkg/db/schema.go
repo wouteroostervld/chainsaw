@@ -2,7 +2,7 @@ package db
 
 // SchemaVersion identifies the layout of the database. A database written by
 // another version is not migrated: the index is cheap to rebuild.
-const SchemaVersion = "3.0.0"
+const SchemaVersion = "3.1.0"
 
 // schema holds the DDL statements, in dependency order
 var schema = []string{
@@ -27,6 +27,17 @@ var schema = []string{
 	`CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);`,
 	`CREATE INDEX IF NOT EXISTS idx_files_hash ON files(content_hash);`,
 	`CREATE INDEX IF NOT EXISTS idx_files_status ON files(status, queued_at);`,
+
+	// Which kinds of index hold a file, and the modification time the file
+	// had when each was built. The kinds are built independently: one can be
+	// switched on later, or fail, without the others being redone.
+	`CREATE TABLE IF NOT EXISTS file_modules (
+    file_id INTEGER NOT NULL,
+    module TEXT NOT NULL,
+    mod_time INTEGER NOT NULL,
+    PRIMARY KEY (file_id, module)
+);`,
+	`CREATE INDEX IF NOT EXISTS idx_file_modules_module ON file_modules(module);`,
 
 	// Chunks are the pieces a parsed file is folded into: the file skeleton
 	// and one per definition large enough to fold. Only where they are is
@@ -114,4 +125,8 @@ var schema = []string{
 const (
 	MetaKeySchemaVersion = "schema_version"
 	MetaKeyCreatedAt     = "created_at"
+
+	// The model the embeddings were made with, and the length of its vectors
+	MetaKeyEmbeddingModel = "embedding_model"
+	MetaKeyEmbeddingDim   = "embedding_dimension"
 )

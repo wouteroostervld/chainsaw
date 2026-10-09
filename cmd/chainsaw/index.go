@@ -1,0 +1,414 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/wouteroostervld/chainsaw/pkg/chunker"
+	"github.com/wouteroostervld/chainsaw/pkg/config"
+	"github.com/wouteroostervld/chainsaw/pkg/db"
+	"github.com/wouteroostervld/chainsaw/pkg/filter"
+	"github.com/wouteroostervld/chainsaw/pkg/indexer"
+)
+
+const indexUsage = `Usage: chainsaw index [options] <path>...
+
+Indexes source files, in every kind of index that is switched on for them:
+
+  graph        Definitions, calls and imports, read from the syntax tree.
+               On by default; takes seconds.
+  embeddings   A vector for each chunk of code, for "chainsaw search". Off by
+               default: it needs a model, and a request to it for every file.
+
+Which are on is set in ~/.chainsaw/config.yaml, and for a project in a
+.config.yaml in its directory; "chainsaw status" shows what is on here. A
+kind that is switched off for a file drops what it held of it. Each path is a file or a directory; directories are searched for
+source files, skipping the excluded directories and file blacklist of your
+configuration. Files that have not been modified since they were indexed are
+skipped, and a kind of index that already holds a file as it is does not
+redo it when another is switched on. When a file under a given directory is gone from disk, the index
+forgets it. Chainsaw never deletes or changes source files. A file named directly is indexed whatever the configuration
+excludes; one in a language that cannot be parsed is passed over.
+
+"chainsaw query" and "chainsaw search" do this by themselves for the current
+directory, each for the kind of index it uses, so running it by hand is only
+needed for large trees or to index something elsewhere.
+
+Options:
+  --force          Index files again even if they have not been modified
+  --only KINDS     Only these kinds of index, comma-separated (graph, embeddings)
+  -                Read more paths from standard input, one per line
+  -0               With -, paths on standard input end in a NUL byte
+
+Examples:
+  chainsaw index .
+  chainsaw index pkg cmd/chainsaw/main.go
+  git diff --name-only | chainsaw index -
+  find . -name '*.go' -newer Makefile -print0 | xargs -0 chainsaw index
+  find . -name '*.py' -print0 | chainsaw index -0 -`
+
+// autoIndexLimit is the most files a query will index by itself. Parsing
+// more than this takes long enough that it should be asked for.
+const autoIndexLimit = 1000
+
+func handleIndex(args []string) {
+	flags := flag.NewFlagSet("index", flag.ExitOnError)
+	flags.Usage = func() { fmt.Println(indexUsage) }
+	force := flags.Bool("force", false, "")
+	only := flags.String("only", "", "")
+	nul := flags.Bool("0", false, "")
+	flags.Parse(args)
+
+	if flags.NArg() == 0 {
+		fmt.Println(indexUsage)
+		os.Exit(1)
+	}
+
+	// A path that does not exist is reported and the rest is still indexed,
+	// so one bad name does not spoil a pipeline
+	var roots []string
+	missing := 0
+	add := func(path string) {
+		abs, err := filepath.Abs(path)
+		if err == nil {
+			_, err = os.Stat(abs)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  %v\n", err)
+			missing++
+			return
+		}
+		roots = append(roots, abs)
+	}
+	for _, arg := range flags.Args() {
+		if arg != "-" {
+			add(arg)
+			continue
+		}
+		input, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fail("reading standard input: %v", err)
+		}
+		separator := "\n"
+		if *nul {
+			separator = "\x00"
+		}
+		for _, path := range strings.Split(string(input), separator) {
+			if path = strings.TrimSuffix(path, "\r"); path != "" {
+				add(path)
+			}
+		}
+	}
+
+	st, err := loadSettings()
+	if err != nil {
+		fail("%v", err)
+	}
+	opts := syncOptions{force: *force, progress: os.Stdout, errors: os.Stderr}
+	if *only != "" {
+		for _, kind := range strings.Split(*only, ",") {
+			kind = strings.TrimSpace(kind)
+			if _, known := config.DefaultIndex()[kind]; !known {
+				fail("--only: unknown kind of index %q (known: graph, embeddings)", kind)
+			}
+			opts.only = append(opts.only, kind)
+		}
+	}
+
+	database := openDB()
+	defer database.Close()
+
+	start := time.Now()
+	stats, err := syncIndex(database, st, roots, opts)
+	if errors.Is(err, indexer.ErrNoEmbedder) {
+		fail("%v.\n\n%s", err, embeddingsHelp)
+	}
+	if err != nil {
+		fail("%v", err)
+	}
+
+	fmt.Printf("Indexed %d files in %v", stats.indexed, time.Since(start).Round(time.Millisecond))
+	if stats.unchanged > 0 {
+		fmt.Printf(", %d unchanged", stats.unchanged)
+	}
+	if stats.removed > 0 {
+		fmt.Printf(", %s", removedSummary(stats.removed))
+	}
+	if stats.skipped > 0 {
+		fmt.Printf(", %d not source files", stats.skipped)
+	}
+	if stats.failed > 0 {
+		fmt.Printf(", %d failed", stats.failed)
+	}
+	if missing > 0 {
+		fmt.Printf(", %d not found", missing)
+	}
+	fmt.Println()
+	if stats.failed > 0 || missing > 0 {
+		os.Exit(1)
+	}
+}
+
+type syncOptions struct {
+	only     []string  // The kinds of index to bring up to date; all of them when empty
+	force    bool      // Index files even when they have not been modified
+	limit    int       // Do nothing when more files than this need indexing (0 = no limit)
+	progress io.Writer // Where to report progress on a long run; nil for silence
+	errors   io.Writer // Where to report files that could not be indexed; nil for silence
+}
+
+type syncStats struct {
+	indexed   int
+	unchanged int
+	removed   int // Files the index knew that are gone from disk
+	failed    int
+	skipped   int // Files named directly that are not in a language that can be parsed
+	pending   int // Files that need indexing but were left because of the limit
+}
+
+// syncIndex brings the index up to date with the given files and with the
+// files under the given directories: new and modified files are indexed, and
+// the index forgets files that are gone from disk. Nothing on disk is changed.
+// A file is indexed in the kinds of index that are switched on for it and do
+// not hold it as it is now.
+func syncIndex(database *db.DB, st *settings, roots []string, opts syncOptions) (syncStats, error) {
+	var stats syncStats
+	profile := st.profile
+	idx, err := st.indexer(database, opts.only...)
+	if err != nil {
+		return stats, err
+	}
+	if err := resetEmbeddings(database, st, opts); err != nil {
+		return stats, err
+	}
+
+	// What is on disk, and which of it the index does not have as it is now
+	var todo []string
+	var planErr error
+	known := make(map[string]db.IndexedFile)
+	seen := make(map[string]bool)
+	needed := make(map[string]bool) // The kinds of index that have files to index
+
+	check := func(path string, info os.FileInfo) {
+		if seen[path] {
+			return
+		}
+		seen[path] = true
+		plan, err := idx.Plan(path, info.ModTime().UnixNano(), known[path].Modules, opts.force)
+		if err != nil {
+			planErr = err
+			return
+		}
+		if plan.Empty() {
+			stats.unchanged++
+			return
+		}
+		for _, kind := range plan.Update {
+			needed[kind] = true
+		}
+		todo = append(todo, path)
+	}
+
+	for _, root := range roots {
+		indexed, err := database.IndexedFiles(root)
+		if err != nil {
+			return stats, err
+		}
+		for path, f := range indexed {
+			known[path] = f
+		}
+
+		info, err := os.Stat(root)
+		if err != nil {
+			return stats, err
+		}
+		if !info.IsDir() {
+			// A file named directly is indexed whatever the configuration
+			// excludes, as long as it can be parsed
+			if chunker.Supported(root) {
+				check(root, info)
+			} else if !seen[root] {
+				seen[root] = true
+				stats.skipped++
+			}
+			continue
+		}
+
+		err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				// A directory named by hand is not limited to the included
+				// directories, but excluded ones are skipped as the daemon does
+				name := d.Name()
+				if path != root && (strings.HasPrefix(name, ".") || excluded(path, profile.Exclude)) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !d.Type().IsRegular() || !chunker.Supported(path) {
+				return nil
+			}
+			if ok, _ := filter.ShouldIndexFile(path, profile.Blacklist, profile.Whitelist); !ok {
+				return nil
+			}
+			if info, err := d.Info(); err == nil {
+				check(path, info)
+			}
+			return nil
+		})
+		if err != nil {
+			return stats, err
+		}
+	}
+
+	// Files the index has that are gone from disk. One that is still there
+	// but was not walked, such as a file in an excluded directory that was
+	// indexed by name, stays.
+	for path, f := range known {
+		if seen[path] {
+			continue
+		}
+		if _, err := os.Stat(path); err == nil {
+			continue
+		}
+		if err := idx.ForgetFile(f.ID, path); err != nil {
+			return stats, err
+		}
+		stats.removed++
+		if opts.progress != nil {
+			fmt.Fprintf(opts.progress, "removed file detected: %s\n", displayPath(path, workingDir()))
+		}
+	}
+
+	if planErr != nil {
+		return stats, planErr
+	}
+
+	if opts.limit > 0 && len(todo) > opts.limit {
+		stats.pending = len(todo)
+		return stats, nil
+	}
+
+	// Said once here, not once for every file
+	kinds := make([]string, 0, len(needed))
+	for kind := range needed {
+		kinds = append(kinds, kind)
+	}
+	if err := idx.Ready(kinds); err != nil {
+		return stats, err
+	}
+
+	ctx := context.Background()
+	reported := time.Now()
+	inARow := 0 // Files on end that a model would not embed
+	for done, path := range todo {
+		if err := idx.IndexFile(ctx, path, opts.force); err != nil {
+			if opts.errors != nil {
+				fmt.Fprintf(opts.errors, "  %s: %v\n", displayPath(path, workingDir()), err)
+			}
+			stats.failed++
+			// A model that is away fails every file the same way
+			var failure *indexer.ModuleError
+			if errors.As(err, &failure) && failure.Module == config.IndexEmbeddings {
+				if inARow++; inARow == 3 && len(todo)-done > 1 {
+					return stats, fmt.Errorf("stopped with %d files to go: the embeddings index failed for three files in a row", len(todo)-done-1)
+				}
+			}
+			continue
+		}
+		inARow = 0
+		stats.indexed++
+		// Parsing reports every few hundred files; a slow model every few seconds
+		if opts.progress != nil && (stats.indexed%200 == 0 || time.Since(reported) > 5*time.Second) {
+			fmt.Fprintf(opts.progress, "  indexed %d of %d files...\n", stats.indexed, len(todo))
+			reported = time.Now()
+		}
+	}
+	return stats, nil
+}
+
+// resetEmbeddings drops the embeddings when they were made with another model
+// than the one that is configured now: vectors of two models cannot be
+// compared. It does so only for a run that is going to make them again.
+func resetEmbeddings(database *db.DB, st *settings, opts syncOptions) error {
+	if len(opts.only) > 0 {
+		inScope := false
+		for _, kind := range opts.only {
+			inScope = inScope || kind == config.IndexEmbeddings
+		}
+		if !inScope {
+			return nil
+		}
+	}
+	model := st.profile.EmbeddingSettings().Model
+	have, _, err := database.EmbeddingModel()
+	if err != nil || have == "" || model == "" || have == model {
+		return err
+	}
+	if opts.limit > 0 {
+		// In passing, before a search: leave it to be asked for
+		return nil
+	}
+	if opts.progress != nil {
+		fmt.Fprintf(opts.progress, "embeddings were made with %s and %s is configured: making them again\n", have, model)
+	}
+	return database.ResetEmbeddings(config.IndexEmbeddings)
+}
+
+// removedSummary words the count of files that were found to be gone
+func removedSummary(n int) string {
+	if n == 1 {
+		return "1 removed file detected"
+	}
+	return fmt.Sprintf("%d removed files detected", n)
+}
+
+// excluded reports whether a directory is one the configuration says to skip
+func excluded(dir string, exclude []string) bool {
+	ok, _ := filter.ShouldIndexDirectory(dir, []string{dir}, exclude)
+	return !ok
+}
+
+// autoIndex brings one kind of index up to date with the current directory
+// before it is used, so results never come from stale or missing files. It
+// says what it did on standard error, and leaves a tree that is too large to
+// index in passing for "chainsaw index".
+func autoIndex(database *db.DB, cwd string, kind string) {
+	if cwd == "" {
+		return
+	}
+	st, err := loadSettings()
+	if err != nil {
+		fail("%v", err)
+	}
+	limit := autoIndexLimit
+	if kind == config.IndexEmbeddings {
+		limit = autoEmbedLimit
+	}
+	start := time.Now()
+	stats, err := syncIndex(database, st, []string{cwd}, syncOptions{only: []string{kind}, limit: limit, progress: os.Stderr, errors: os.Stderr})
+	switch {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "note: could not bring the %s index up to date: %v\n", kind, err)
+	case stats.pending > 0:
+		fmt.Fprintf(os.Stderr, "note: %d files here are not in the %s index or have changed, too many to index in passing; run \"chainsaw index .\" (results may be incomplete)\n", stats.pending, kind)
+	case stats.indexed > 0 || stats.removed > 0 || stats.failed > 0:
+		fmt.Fprintf(os.Stderr, "note: %s index updated in %v: %d files indexed", kind, time.Since(start).Round(time.Millisecond), stats.indexed)
+		if stats.removed > 0 {
+			fmt.Fprintf(os.Stderr, ", %s", removedSummary(stats.removed))
+		}
+		if stats.failed > 0 {
+			fmt.Fprintf(os.Stderr, ", %d failed", stats.failed)
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+}

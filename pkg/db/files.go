@@ -104,6 +104,9 @@ func (db *DB) GetFileByID(id int64) (*File, error) {
 // ForgetFile drops the index's record of a file. The file on disk is not
 // touched: this is for a file that is already gone from it.
 func (db *DB) ForgetFile(path string) error {
+	if _, err := db.conn.Exec("DELETE FROM file_modules WHERE file_id IN (SELECT id FROM files WHERE path = ?)", path); err != nil {
+		return fmt.Errorf("failed to delete file: %w", err)
+	}
 	result, err := db.conn.Exec("DELETE FROM files WHERE path = ?", path)
 	if err != nil {
 		return fmt.Errorf("failed to delete file: %w", err)
@@ -350,15 +353,16 @@ GROUP BY status
 // IndexedFile is what the index remembers of a file to tell whether it changed
 type IndexedFile struct {
 	ID      int64
-	ModTime int64 // Nanoseconds
+	Modules map[string]int64 // By kind of index, the modification time (nanoseconds) the file had when it was built
 }
 
 // IndexedFiles returns the files at or under a path that are in the index,
 // by path
 func (db *DB) IndexedFiles(root string) (map[string]IndexedFile, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, path, last_mod_time FROM files
-		WHERE path = ? OR substr(path, 1, length(?)) = ?
+		SELECT f.id, f.path, m.module, m.mod_time
+		FROM files f LEFT JOIN file_modules m ON m.file_id = f.id
+		WHERE f.path = ? OR substr(f.path, 1, length(?)) = ?
 	`, root, root+"/", root+"/")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query indexed files: %w", err)
@@ -367,12 +371,83 @@ func (db *DB) IndexedFiles(root string) (map[string]IndexedFile, error) {
 
 	files := make(map[string]IndexedFile)
 	for rows.Next() {
+		var id int64
 		var path string
-		var f IndexedFile
-		if err := rows.Scan(&f.ID, &path, &f.ModTime); err != nil {
+		var module sql.NullString
+		var modTime sql.NullInt64
+		if err := rows.Scan(&id, &path, &module, &modTime); err != nil {
 			return nil, fmt.Errorf("failed to scan indexed file: %w", err)
 		}
-		files[path] = f
+		f, ok := files[path]
+		if !ok {
+			f = IndexedFile{ID: id, Modules: make(map[string]int64)}
+			files[path] = f
+		}
+		if module.Valid {
+			f.Modules[module.String] = modTime.Int64
+		}
 	}
 	return files, rows.Err()
+}
+
+// FileModules returns the kinds of index that hold a file, with the
+// modification time the file had when each was built
+func (db *DB) FileModules(fileID int64) (map[string]int64, error) {
+	rows, err := db.conn.Query("SELECT module, mod_time FROM file_modules WHERE file_id = ?", fileID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query file modules: %w", err)
+	}
+	defer rows.Close()
+
+	modules := make(map[string]int64)
+	for rows.Next() {
+		var module string
+		var modTime int64
+		if err := rows.Scan(&module, &modTime); err != nil {
+			return nil, fmt.Errorf("failed to scan file module: %w", err)
+		}
+		modules[module] = modTime
+	}
+	return modules, rows.Err()
+}
+
+// SetFileModule records that a kind of index holds a file as it was at a
+// modification time
+func (db *DB) SetFileModule(fileID int64, module string, modTime int64) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO file_modules (file_id, module, mod_time) VALUES (?, ?, ?)
+		ON CONFLICT(file_id, module) DO UPDATE SET mod_time = excluded.mod_time
+	`, fileID, module, modTime)
+	if err != nil {
+		return fmt.Errorf("failed to set file module: %w", err)
+	}
+	return nil
+}
+
+// ClearFileModule records that a kind of index no longer holds a file
+func (db *DB) ClearFileModule(fileID int64, module string) error {
+	if _, err := db.conn.Exec("DELETE FROM file_modules WHERE file_id = ? AND module = ?", fileID, module); err != nil {
+		return fmt.Errorf("failed to clear file module: %w", err)
+	}
+	return nil
+}
+
+// CountFilesByModule returns how many files each kind of index holds
+func (db *DB) CountFilesByModule() (map[string]int64, error) {
+	rows, err := db.conn.Query("SELECT module, COUNT(*) FROM file_modules GROUP BY module")
+	if err != nil {
+		return nil, fmt.Errorf("failed to count file modules: %w", err)
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int64)
+	for rows.Next() {
+		var module string
+		var count int64
+		if err := rows.Scan(&module, &count); err != nil {
+			return nil, fmt.Errorf("failed to scan file module count: %w", err)
+		}
+		counts[module] = count
+	}
+	return counts, rows.Err()
 }

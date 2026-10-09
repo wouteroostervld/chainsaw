@@ -2,7 +2,8 @@
 
 Chainsaw looks at code through its syntax tree. It has three ways of looking,
 `grep`, `outline` and `query`, and one way of showing what it found in more
-or less context, `--expand`.
+or less context, `--expand`. A fourth way of looking, `search`, finds code by
+what it means; it needs a model and is off until you switch it on.
 
 ## Contents
 
@@ -10,8 +11,10 @@ or less context, `--expand`.
 - [grep](#grep): search, with the definition around each match
 - [outline](#outline): a file folded to its signatures
 - [query](#query): the code graph
+- [search](#search): by meaning, when embeddings are switched on
 - [Showing code: --expand](#showing-code---expand)
 - [The index](#the-index)
+- [Kinds of index](#kinds-of-index): what is on, and where
 - [The graph](#the-graph)
 - [Configuration](#configuration)
 - [Troubleshooting](#troubleshooting)
@@ -26,8 +29,9 @@ make install          # builds to ~/.local/bin/chainsaw
 
 Needs Go 1.24.7+, a C compiler and the PCRE2 development files
 (`pcre2-devel` on Fedora, `libpcre2-dev` on Debian and Ubuntu). Nothing else:
-there is no model to pull and no service to run. `grep` and `outline` work straight away; `query`
-needs `chainsaw index <path>` first.
+there is no model to pull and no service to run, unless you switch on
+`search`. `grep` and `outline` work straight away; `query` indexes what it
+needs by itself.
 
 ## grep
 
@@ -182,6 +186,52 @@ By default a result must touch the current directory: at least one node of
 the matched path is defined under it. `chainsaw graph query` is accepted as
 an older spelling of `chainsaw query`.
 
+## search
+
+```bash
+chainsaw search "where are retries handled"
+chainsaw search --expand body --limit 3 parse a config file
+```
+
+Finds the definitions and sections whose content is closest in meaning to
+what you describe, whatever words they use. It is for when you have a
+description and no name; when you have a name or a string, `grep` is exact
+and needs nothing.
+
+`search` uses the `embeddings` index, which is **off by default**: see
+[Kinds of index](#kinds-of-index) for switching it on. Without a model
+configured it says so and stops.
+
+```
+$ chainsaw search --limit 2 "send a request to the model and read the vectors"
+search: "send a request to the model and read the vectors"
+results:
+  - file: pkg/embed/embed.go
+    lines: 60-104
+    in: Client.Embed
+    distance: 0.318
+  - file: pkg/embed/embed_test.go
+    lines: 17-43
+    in: TestEmbed_Ollama
+    distance: 0.326
+total: 2
+```
+
+`distance` is the cosine distance between your words and the chunk: 0 is the
+same, 1 is unrelated. A result without `in` is a file as a whole, folded to
+its signatures.
+
+| Option | |
+|---|---|
+| `--all` | Do not limit results to the current directory |
+| `--limit N` | Results to return (default 10) |
+| `--expand body`, `file`, `calls` | Also show the code, as for `grep` and `query` |
+| `--no-index` | Search the index as it is, without first embedding what changed here |
+
+Before a search runs, files under the current directory that are new or
+modified are embedded, when embeddings are on for them. More than 100 files
+are left for `chainsaw index .`, since every file is a request to the model.
+
 ## Showing code: --expand
 
 `grep` and `query` find places. `--expand` shows the code at those places,
@@ -206,6 +256,7 @@ chainsaw query --expand file 'MATCH (f)-[:calls]->(t {name: "nearest"}) RETURN f
 ```bash
 chainsaw index <path>...      # parse and record files, or the files under directories
 chainsaw index --force <path> # also files that have not changed
+chainsaw index --only graph . # one kind of index only (graph, embeddings)
 chainsaw status               # what is in the index
 chainsaw daemon start         # watch the configured directories for changes
 ```
@@ -244,9 +295,87 @@ indexed, and the exit status is 1.
 The daemon is optional as well. It watches the `include` directories of your
 configuration and re-indexes files as they change.
 
-The index is `~/.chainsaw/graph.db`. It holds names, locations and edges, and
-no source text: the code a query shows (`snippet`, `--expand`) is read from
-the files when it is asked for. It can be deleted at any time.
+The index is `~/.chainsaw/graph.db`. It holds names, locations, edges and,
+when embeddings are on, vectors. It holds no source text: the code a query
+or a search shows (`snippet`, `--expand`) is read from the files when it is
+asked for. It can be deleted at any time.
+
+## Kinds of index
+
+The index is made of independent parts. Each is built from the same parse of
+a file, stores its own data, and can be switched on or off without touching
+the others.
+
+| Kind | Holds | Used by | Cost | Default |
+|---|---|---|---|---|
+| `graph` | Definitions, calls and imports | `query`, `--expand calls` | Parsing: milliseconds a file | on |
+| `embeddings` | A vector for each chunk of code | `search` | A request to a model for every file | off |
+
+`grep` and `outline` use no index at all.
+
+**Switching a kind on or off** is done under `index:`, in the profile of
+`~/.chainsaw/config.yaml` for everything, or in a `.config.yaml` in a
+directory for the files below it. The nearest `.config.yaml` above a file
+decides; a kind it does not mention keeps the setting of the profile.
+
+```yaml
+# ~/projects/big-service/.config.yaml
+index:
+  embeddings: true     # search by meaning in this project
+```
+
+```yaml
+# ~/projects/vendored-thing/.config.yaml
+index:
+  graph: false         # not worth a graph
+```
+
+**Embeddings need a model**, and that is only ever read from your own
+`~/.chainsaw/config.yaml`: a project can ask for embeddings, it cannot say
+where your source is sent.
+
+```yaml
+profiles:
+  default:
+    embeddings:
+      model: nomic-embed-text            # Ollama on http://localhost:11434
+```
+
+```yaml
+    embeddings:                          # or any server that speaks the OpenAI API
+      base_url: https://api.openai.com/v1
+      api_key: sk-...
+      model: text-embedding-3-small
+```
+
+`provider: ollama` or `provider: openai` says which protocol to speak when it
+does not follow from the rest (an `api_key` or an address ending in `/v1`
+means OpenAI). Naming a model switches nothing on; `index: {embeddings:
+true}` does. With embeddings on and no model, `chainsaw index` stops and
+says so, and `query` carries on as before.
+
+**The kinds are kept current separately.** A command brings up to date only
+the kind it uses, so `query` never waits for a model, and `chainsaw index`
+does all that are on. Switching `embeddings` on later embeds the files
+without building the graph again; a model that is away leaves the graph
+built, and the embeddings are tried again next time. After three files in a
+row that the model fails on, a run stops rather than repeat the error for
+every file.
+
+**Switching a kind off** for a file drops what that kind held of it, the next
+time `chainsaw index` or a command that uses that kind comes by. For
+embeddings that is work thrown away, so switch them off where you mean it.
+
+**Changing the model** makes the stored vectors useless: vectors of two
+models cannot be compared. `chainsaw search` says so and stops; the next
+`chainsaw index` drops them and embeds again with the new model.
+
+`chainsaw status` shows which kinds are on in the current directory, how
+many files each holds, and which model the embeddings were made with.
+
+What is embedded is the same chunks the outline folds a file into: each
+definition, and the file folded to its signatures, each with its file and
+name in front. Only where a chunk is is stored, with its vector.
 
 ## The graph
 
@@ -294,11 +423,18 @@ strings that name a function. `chainsaw grep` can.
 active profile:
 
 ```yaml
-version: "2.0"
+version: "3"
 active_profile: "default"
 
 profiles:
   default:
+    # Kinds of index, see above. These are the defaults.
+    index:
+      graph: true
+      embeddings: false
+    # The model for the embeddings index; needed only when it is on
+    # embeddings:
+    #   model: nomic-embed-text
     # Directories the daemon watches
     include:
       - ~/Projects
@@ -313,15 +449,28 @@ profiles:
       - '\.min\.js$'
 ```
 
-Write directory names without a trailing slash. Settings from older versions
-(`embedding_model`, `chunk_size`, `overlap`, `graph_driver`, `llm_*`) are
-ignored.
+Write directory names without a trailing slash. A project's `.config.yaml`
+can add to `exclude` and `blacklist` and set `index`. Of the settings of
+older versions, `embedding_model` still names the model when `embeddings:`
+does not (and, as before, switches nothing on); `chunk_size`, `overlap`,
+`graph_driver` and `llm_*` are ignored.
+
+A configuration file that is there but cannot be read is an error for
+`index`, `query` and `search`, not a reason to carry on with defaults:
+defaults would switch off what it switches on.
 
 ## Troubleshooting
 
 **`query` returns nothing.** Results are limited to the current directory;
 try `--all`. If a note says there were too many files to index in passing,
 run `chainsaw index .` once.
+
+**`search` returns nothing.** The embeddings index is off unless you switched
+it on; `chainsaw status` shows whether it is on in this directory, and the
+note under the empty result says how to switch it on.
+
+**`search` says the index holds embeddings made with another model.** Run
+`chainsaw index .` to make them again with the model that is configured now.
 
 **A call is missing from the graph.** In Go, check that the package compiles
 and that `go` is on the PATH. In other languages, a method call on a variable

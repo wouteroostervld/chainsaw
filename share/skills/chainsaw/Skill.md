@@ -6,13 +6,14 @@ description: Structural code search for a local codebase. Use to grep with the e
 # Chainsaw
 
 `chainsaw` looks at code through its syntax tree. Three commands, all
-read-only:
+read-only, plus a fourth that only works where it is switched on:
 
 | Command | Answers | Needs the index |
 |---|---|---|
 | `chainsaw grep <pattern> [path...]` | Where is this text, and which definition is it inside? | No |
 | `chainsaw outline <file>` | What is in this file, without reading it? | No |
 | `chainsaw query '<cypher>'` | Who calls this? What does it call? What implements it? | Yes, kept current automatically |
+| `chainsaw search <words>` | Where is the code that does this, when I have no name for it? | Yes, and off by default |
 
 Run them from inside the project. Parsed languages: Go, Python, JavaScript,
 TypeScript, Rust, Java, C, C++, Ruby.
@@ -100,7 +101,7 @@ too many files to index in passing, run `chainsaw index .` once.
 
 ## --expand: show the code
 
-Add to `grep` or `query` to see code instead of only locations:
+Add to `grep`, `query` or `search` to see code instead of only locations:
 
 ```bash
 chainsaw grep --expand body 'SkipDir' cmd
@@ -120,4 +121,4 @@ chainsaw query --expand body 'MATCH (f)-[:calls]->(t {name: "nearest"}) RETURN f
 - **"What does this file do?"** `chainsaw outline <file>`.
 - **"Who calls X?" / "What does X reach?"** `chainsaw query`, then `--expand body` to read the callers.
 - **"What implements this interface?"** `chainsaw query` with `[:implements]`.
-- **You only have a description and no name.** There is no semantic search. Guess identifiers with `grep -i`, or outline the likely files.
+- **You only have a description and no name.** Try `chainsaw search --expand body "<description>"`. It works only where the user switched on the embeddings index (`chainsaw status` says `embeddings: on here`). If it reports that no model is configured, or returns nothing with a note that embeddings are off, do not switch them on yourself: it costs the user model requests. Guess identifiers with `grep -i`, or outline the likely files.

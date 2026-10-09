@@ -30,9 +30,17 @@ blacklist:
   - ".*\\.log$"         # Log files
   - ".*debug.*\\.go$"   # Debug-specific code files
 
+# For Both: Switch kinds of index on or off for the files below this
+# directory. A kind that is not named keeps the setting of your profile.
+index:
+  embeddings: true      # Search by meaning here ("chainsaw search"); needs a
+                        # model in ~/.chainsaw/config.yaml
+  # graph: false        # Keep no code graph of this project
+
 # ❌ CANNOT OVERRIDE:
 # - whitelist (global exceptions only)
-# - embedding_model, chunk_size, overlap
+# - embeddings (which model, and where it is: a project can ask for
+#   embeddings, it cannot say where your source is sent)
 # - include (daemon ignores local include)
 
 # EXAMPLES:
