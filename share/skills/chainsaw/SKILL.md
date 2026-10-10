@@ -1,6 +1,6 @@
 ---
 name: chainsaw
-description: Structural code search for a local codebase. Use to grep with the enclosing function or type shown for every match, to see a file folded to its signatures before reading it, and to query the call graph (who calls X, what does X call, what implements an interface). Prefer it over plain grep and over reading whole files when locating code or planning a change that must cover every use.
+description: Structural code search for a local codebase with the chainsaw CLI. Greps with the enclosing function or type shown for every match, folds a file to its signatures, and queries the call graph (who calls X, what does X call, what implements an interface). Use when locating code, finding usages or callers, getting to know a large file, or planning a rename, removal or refactor that must cover every use. Prefer it over plain grep and over reading whole files.
 ---
 
 # Chainsaw
@@ -17,6 +17,10 @@ read-only, plus a fourth that only works where it is switched on:
 
 Run them from inside the project. Parsed languages: Go, Python, JavaScript,
 TypeScript, Rust, Java, C, C++, Ruby.
+
+If `chainsaw` is not on the PATH, say so and work with plain grep; do not
+install it yourself. It is built from
+<https://github.com/wouteroostervld/chainsaw> with `make install`.
 
 ## grep: search, with the definition around each match
 
@@ -54,7 +58,8 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error // ...
 
 A folded line gives the signature and the lines of the body. Read those lines
 of the file when you need the body. **Outline a large file before reading
-it.**
+it.** `--expand` takes a qualified name (`Type.method`), a bare name or a
+line number, and may be given more than once.
 
 ## query: the call graph
 
@@ -81,12 +86,15 @@ chainsaw query 'MATCH (n:FUNCTION|METHOD) WHERE n.name =~ "^handle" RETURN n.sig
 - **Edges** `-[:calls]->`, `<-[:calls]-`, `-[:calls|may_call]->`,
   `-[:calls*1..3]->`. Types: `calls`, `may_call`, `implements`, `imports`,
   `defines`.
-- **Properties** `name type file line end_line lines signature snippet`.
-- **WHERE** `= <> < >`, `CONTAINS`, `STARTS WITH`, `ENDS WITH`, `=~`,
-  `IN [...]`, `IS NULL`, `AND OR NOT`.
-- **RETURN** `v`, `v.prop`, `count(v)`, `DISTINCT`; then `ORDER BY`, `LIMIT`.
+- **Properties** `name type file line end_line lines signature container
+  short_name snippet`.
+- **WHERE** `= <> < > <= >=`, `CONTAINS`, `STARTS WITH`, `ENDS WITH`, `=~`,
+  `IN [...]`, `IS NULL`, `IS NOT NULL`, `AND OR NOT`.
+- **RETURN** `v`, `v.prop`, `count(*)`, `count(v)`, `AS`, `DISTINCT`; then
+  `ORDER BY ... DESC`, `SKIP`, `LIMIT`.
 
 Results are limited to the current directory; add `--all` to lift that.
+`chainsaw query --help` has the whole grammar.
 
 `calls` is certain. `may_call` means "may end up there": in Go, a call
 through an interface, to each implementing type; in other languages, a method

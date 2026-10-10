@@ -115,7 +115,7 @@ dependencies.
 ## Documentation
 
 - **[Manual](MANUAL.md)**: commands, the query language, the graph, configuration
-- **[Agent skill](share/skills/chainsaw/Skill.md)**: how an AI coding agent should use it
+- **[Agent skill](share/skills/chainsaw/SKILL.md)**: how an AI coding agent should use it
 
 ## How it works
 
