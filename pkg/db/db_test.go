@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestOpen_NewDatabase(t *testing.T) {
@@ -125,5 +126,29 @@ func TestRawQuery_Regexp(t *testing.T) {
 	}
 	if !matched {
 		t.Error("REGEXP did not match")
+	}
+}
+
+func TestWritesWaitForEachOther(t *testing.T) {
+	db := openSymbolsDB(t)
+
+	// A write that is going on, such as the symbols of a file being stored
+	db.conn.writing.Lock()
+	done := make(chan error, 1)
+	go func() { done <- db.MarkFilePending("/proj/a.go", 1, "hash") }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("a second write did not wait for the first: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	// Reading goes on meanwhile
+	if _, err := db.CountFiles(); err != nil {
+		t.Errorf("CountFiles during a write failed: %v", err)
+	}
+
+	db.conn.writing.Unlock()
+	if err := <-done; err != nil {
+		t.Errorf("MarkFilePending after the first write failed: %v", err)
 	}
 }

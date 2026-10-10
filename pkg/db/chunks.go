@@ -23,6 +23,10 @@ func (db *DB) InsertChunk(fileID int64, startLine, endLine int) (int64, error) {
 // the entities, edges and symbols that were derived from them.
 // This is used when re-indexing a file
 func (db *DB) DeleteChunksForFile(fileID int64) error {
+	// A transaction writes; see pool
+	db.conn.writing.Lock()
+	defer db.conn.writing.Unlock()
+
 	tx, err := db.conn.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)

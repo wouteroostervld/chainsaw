@@ -68,6 +68,10 @@ func qualifiedName(name, container string) string {
 // import says so. The file's previous symbols must have been removed with
 // DeleteChunksForFile.
 func (db *DB) StoreFileSymbols(fileID int64, root string, defs []SymbolDef, refs []SymbolRef) error {
+	// A transaction writes; see pool
+	db.conn.writing.Lock()
+	defer db.conn.writing.Unlock()
+
 	tx, err := db.conn.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)

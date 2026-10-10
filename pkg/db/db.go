@@ -20,8 +20,26 @@ var registerDriver sync.Once
 
 // DB wraps the SQLite database connection with our schema
 type DB struct {
-	conn *sql.DB
+	conn *pool
 	path string
+}
+
+// pool is the connections to the database, with a queue for writing. SQLite
+// lets one connection write at a time and fails the others with "database is
+// locked" when they have waited for the busy timeout. Storing the symbols of
+// one file can take longer than that, so the writers of one process wait for
+// each other here, for as long as it takes. Reading does not wait. Writers in
+// other processes are still up to SQLite.
+type pool struct {
+	*sql.DB
+	writing sync.Mutex
+}
+
+// Exec runs a statement that writes, when no other write is going on
+func (p *pool) Exec(query string, args ...any) (sql.Result, error) {
+	p.writing.Lock()
+	defer p.writing.Unlock()
+	return p.DB.Exec(query, args...)
 }
 
 // Config holds database configuration
@@ -73,7 +91,7 @@ func Open(cfg Config) (*DB, error) {
 	conn.SetMaxIdleConns(2)
 	conn.SetConnMaxLifetime(time.Hour)
 
-	db := &DB{conn: conn, path: cfg.Path}
+	db := &DB{conn: &pool{DB: conn}, path: cfg.Path}
 
 	if err := db.initSchema(); err != nil {
 		conn.Close()
