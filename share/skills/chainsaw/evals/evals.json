@@ -1,0 +1,32 @@
+[
+  {
+    "skills": ["chainsaw"],
+    "query": "In this repository, rename the method StoreFileSymbols to SaveFileSymbols everywhere. Before changing anything, give me the complete list of places you will touch.",
+    "files": [],
+    "expected_behavior": [
+      "Runs `chainsaw grep -s` (or `chainsaw grep`) for StoreFileSymbols to enumerate every use, instead of relying on the call graph or plain grep alone",
+      "The list includes the definitions in pkg/db/symbols.go and pkg/indexer/graph.go, the callers, and the tests",
+      "Reads only the line ranges that chainsaw reported, not whole files"
+    ]
+  },
+  {
+    "skills": ["chainsaw"],
+    "query": "Which code can end up calling DB.StoreFileSymbols, also when the call goes through an interface? Show me the callers' code.",
+    "files": [],
+    "expected_behavior": [
+      "Uses `chainsaw query` with `[:calls|may_call]` rather than `[:calls]` alone, so callers through the interface are found",
+      "Uses `--expand body` (or reads the reported line ranges) to show the callers' code",
+      "Says which callers are certain (`calls`) and which are possible (`may_call`)"
+    ]
+  },
+  {
+    "skills": ["chainsaw"],
+    "query": "I am new to this code. What is in pkg/db/files.go, and how does it decide that a file has changed?",
+    "files": [],
+    "expected_behavior": [
+      "Runs `chainsaw outline pkg/db/files.go` before reading the file",
+      "Reads only the relevant definitions, with `outline --expand` or by line range, instead of the whole file",
+      "Does not switch on the embeddings index or run `chainsaw search` without checking `chainsaw status` first"
+    ]
+  }
+]
