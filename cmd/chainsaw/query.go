@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -49,6 +50,11 @@ Options:
   --expand calls   As file, and also what those definitions call
   --no-index       Query the index as it is, without first indexing what changed here
   --sql            Print the SQL the query is translated to
+  --oneline        One row on a line, its values separated by tabs, and nothing
+                   else: no names of columns, no total
+  --width N        Cut lines to N characters
+
+Options may stand before or after the query.
 
 Before a query runs, source files under the current directory that are new
 or modified are indexed, and the index forgets files that are gone from disk.`
@@ -61,13 +67,17 @@ func handleQuery(args []string) {
 	expand := flags.String("expand", "", "")
 	showSQL := flags.Bool("sql", false, "")
 	noIndex := flags.Bool("no-index", false, "")
-	flags.Parse(args)
+	oneline := flags.Bool("oneline", false, "")
+	width := flags.Int("width", 0, "")
+	given := parse(flags, args)
 
-	if flags.NArg() < 1 {
+	if len(given) < 1 {
 		fmt.Println(queryUsage)
 		os.Exit(1)
 	}
-	query := strings.Join(flags.Args(), " ")
+	query := strings.Join(given, " ")
+	out, done := output(*width)
+	defer done()
 
 	opts := cypher.Options{DefaultLimit: *limit}
 	cwd := workingDir()
@@ -88,7 +98,7 @@ func handleQuery(args []string) {
 		fail("%v", err)
 	}
 	if *showSQL {
-		fmt.Printf("%s\n-- args: %v\n\n", result.SQL, result.Args)
+		fmt.Fprintf(out, "%s\n-- args: %v\n\n", result.SQL, result.Args)
 	}
 
 	database := openDB()
@@ -112,22 +122,34 @@ func handleQuery(args []string) {
 
 	var hits []view.Hit
 	count := 0
-	fmt.Printf("query: %q\n", query)
+	if !*oneline {
+		fmt.Fprintf(out, "query: %q\n", query)
+	}
 	for rows.Next() {
 		if err := rows.Scan(ptrs...); err != nil {
 			fail("reading a row: %v", err)
 		}
-		if count == 0 {
-			fmt.Println("results:")
+		if count == 0 && !*oneline {
+			fmt.Fprintln(out, "results:")
 		}
 		count++
 
 		for i, column := range result.Columns {
+			if *oneline {
+				if i > 0 {
+					fmt.Fprint(out, "\t")
+				}
+				fmt.Fprint(out, cell(values[i]))
+				continue
+			}
 			prefix := "    "
 			if i == 0 {
 				prefix = "  - "
 			}
-			printValue(prefix, column, values[i])
+			printValue(out, prefix, column, values[i])
+		}
+		if *oneline {
+			fmt.Fprintln(out)
 		}
 
 		for i := range result.Locations {
@@ -143,19 +165,30 @@ func handleQuery(args []string) {
 		fail("reading rows: %v", err)
 	}
 
-	if count == 0 {
-		fmt.Println("results: []")
-		return
-	}
-	fmt.Printf("total: %d\n", count)
+	stopped := ""
 	if result.Limited && count == *limit {
-		fmt.Printf("note: stopped at %d rows; add LIMIT to the query or pass --limit for more\n", *limit)
+		stopped = fmt.Sprintf("note: stopped at %d rows; add LIMIT to the query or pass --limit for more", *limit)
+	}
+	switch {
+	case *oneline && stopped != "":
+		// Only rows on standard output, so that every line of it is one
+		done()
+		fmt.Fprintln(os.Stderr, stopped)
+	case *oneline:
+	case count == 0:
+		fmt.Fprintln(out, "results: []")
+		return
+	default:
+		fmt.Fprintf(out, "total: %d\n", count)
+		if stopped != "" {
+			fmt.Fprintln(out, stopped)
+		}
 	}
 
 	if mode != "" && len(hits) > 0 {
-		fmt.Println()
+		fmt.Fprintln(out)
 		// The index was brought up to date above
-		renderHits(hits, mode, cwd, true)
+		renderHits(out, hits, mode, cwd, true)
 	}
 }
 
@@ -169,22 +202,33 @@ func text(v any) (string, bool) {
 	return "", false
 }
 
+// cell is a value as it stands in a row that is one line
+func cell(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, isText := text(v); isText {
+		return oneLine(s)
+	}
+	return fmt.Sprint(v)
+}
+
 // printValue writes one field of a result row as YAML
-func printValue(prefix, name string, v any) {
+func printValue(out io.Writer, prefix, name string, v any) {
 	s, isText := text(v)
 	switch {
 	case v == nil:
-		fmt.Printf("%s%s: null\n", prefix, name)
+		fmt.Fprintf(out, "%s%s: null\n", prefix, name)
 	case !isText:
-		fmt.Printf("%s%s: %v\n", prefix, name, v)
+		fmt.Fprintf(out, "%s%s: %v\n", prefix, name, v)
 	case strings.Contains(s, "\n"):
-		fmt.Printf("%s%s: |\n", prefix, name)
+		fmt.Fprintf(out, "%s%s: |\n", prefix, name)
 		for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
-			fmt.Printf("      %s\n", line)
+			fmt.Fprintf(out, "      %s\n", line)
 		}
 	case s == "" || strings.ContainsAny(s, ":#\"'{}[]*&!|>%@`") || strings.TrimSpace(s) != s:
-		fmt.Printf("%s%s: %q\n", prefix, name, s)
+		fmt.Fprintf(out, "%s%s: %q\n", prefix, name, s)
 	default:
-		fmt.Printf("%s%s: %s\n", prefix, name, s)
+		fmt.Fprintf(out, "%s%s: %s\n", prefix, name, s)
 	}
 }

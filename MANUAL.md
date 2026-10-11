@@ -65,6 +65,9 @@ one.
 | `-F` | The pattern is a literal string |
 | `-w` | Match whole words only |
 | `-s` | Only list the definitions that contain a match, with a count |
+| `--limit N` | Show the first N matching lines only; with `-s`, the first N definitions |
+| `--oneline` | One match on a line: `path:line: [definition] text` |
+| `--width N` | Cut lines to N characters |
 | `--expand body\|file\|calls` | Show the code, see [below](#showing-code---expand) |
 
 Without a path the current directory is searched. Hidden directories and the
@@ -75,10 +78,38 @@ needed, so results are always current.
 `-s` is the quick way to answer "which functions touch this": it is the list
 to work through when something has to change everywhere.
 
+`--limit` is for a pattern that may match a great deal. Unlike cutting the
+output with `head`, it still says how much there is:
+
+```
+$ chainsaw grep -s --limit 3 'err' pkg/db
+pkg/db/chunks.go
+  METHOD DB.InsertChunk  (lines 5-20): 7
+  METHOD DB.DeleteChunksForFile  (lines 22-48): 10
+  METHOD DB.Count  (lines 59-88): 8
+
+663 matching lines in 12 files, the first 3 definitions shown
+```
+
+`--oneline` is for handing the matches to another program. Every line is one
+match, in the form editors and other tools read, and nothing else is written:
+the note that `--limit` stopped the list goes to standard error.
+
+```
+$ chainsaw grep --oneline 'ForgetFile' cmd
+cmd/chainsaw/index.go:295: [syncIndex] if err := idx.ForgetFile(f.ID, path); err != nil {
+$ chainsaw grep -s --oneline 'ForgetFile' pkg/db/files.go
+pkg/db/files.go:104-117: [DB.ForgetFile] 2
+```
+
+Options may stand before or after the pattern and the paths, here and in the
+other commands. Put `--` before a pattern that begins with a dash:
+`chainsaw grep -F -- '--limit'`.
+
 ## outline
 
 ```bash
-chainsaw outline [options] <file>
+chainsaw outline [options] <file>...
 ```
 
 Prints a file folded to its skeleton. Every definition of five lines or more
@@ -98,7 +129,29 @@ functions. Markdown folds along its headings.
 | Option | |
 |---|---|
 | `--expand NAME` | Show this definition in full: a qualified name, a bare name, or a line number. Repeatable. |
+| `--body NAME` | Show this definition in full and nothing else. Repeatable. |
 | `--symbols` | List the definitions instead: type, name, lines, signature |
+| `--width N` | Cut lines to N characters |
+
+`--expand` shows a definition in its place in the folded file; `--body` shows
+the definition alone, under its file and lines:
+
+````
+$ chainsaw outline --body cut cmd/chainsaw/output.go
+## cmd/chainsaw/output.go:71-79 cut
+
+```go
+// cut shortens a line to a number of characters; the last one is then an
+// ellipsis, to show that there was more
+func cut(line string, width int) string {
+	...
+}
+```
+````
+
+Several files are shown one after the other, each under a heading with its
+name. A name given to `--expand` or `--body` is then looked for in all of
+them.
 
 ## query
 
@@ -181,6 +234,18 @@ single node.
 | `--expand body\|file\|calls` | Also show the code of the returned nodes |
 | `--no-index` | Query the index as it is, without first indexing what changed in the current directory |
 | `--sql` | Print the SQL the query is translated to |
+| `--oneline` | One row on a line, its values separated by tabs |
+| `--width N` | Cut lines to N characters |
+
+`--oneline` writes the rows and nothing else: no names of columns and no
+total, and a value of several lines with `\n` between them. It is the form
+to hand to `sort`, `cut` or a loop in the shell.
+
+```
+$ chainsaw query --oneline 'MATCH (f)-[:calls]->(t {name: "displayPath"}) RETURN f.name, f.lines'
+printMatches	185-204
+handleOutline	44-124
+```
 
 By default a result must touch the current directory: at least one node of
 the matched path is defined under it. `chainsaw graph query` is accepted as
@@ -227,6 +292,8 @@ its signatures.
 | `--limit N` | Results to return (default 10) |
 | `--expand body`, `file`, `calls` | Also show the code, as for `grep` and `query` |
 | `--no-index` | Search the index as it is, without first embedding what changed here |
+| `--oneline` | One result on a line: `path:lines`, distance and what it is in, separated by tabs |
+| `--width N` | Cut lines to N characters |
 
 Before a search runs, files under the current directory that are new or
 modified are embedded, when embeddings are on for them. More than 100 files

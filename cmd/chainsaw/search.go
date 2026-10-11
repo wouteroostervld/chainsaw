@@ -29,6 +29,11 @@ Options:
   --expand file    Also show its file folded to signatures, with the definition in full
   --expand calls   As file, and also what those definitions call
   --no-index       Search the index as it is, without first embedding what changed here
+  --oneline        One result on a line: path:lines, distance and what it is
+                   in, separated by tabs, and nothing else
+  --width N        Cut lines to N characters
+
+Options may stand before or after the words.
 
 Before a search runs, source files under the current directory that are new
 or modified are embedded, when embeddings are switched on for them.
@@ -48,16 +53,20 @@ func handleSearch(args []string) {
 	limit := flags.Int("limit", 10, "")
 	expand := flags.String("expand", "", "")
 	noIndex := flags.Bool("no-index", false, "")
-	flags.Parse(args)
+	oneline := flags.Bool("oneline", false, "")
+	width := flags.Int("width", 0, "")
+	given := parse(flags, args)
 
-	if flags.NArg() < 1 {
+	if len(given) < 1 {
 		fmt.Println(searchUsage)
 		os.Exit(1)
 	}
 	if *limit < 1 {
 		fail("--limit must be at least 1")
 	}
-	query := strings.Join(flags.Args(), " ")
+	query := strings.Join(given, " ")
+	out, done := output(*width)
+	defer done()
 
 	var mode view.Mode
 	if *expand != "" {
@@ -98,7 +107,9 @@ func handleSearch(args []string) {
 	if *all {
 		root = ""
 	}
-	fmt.Printf("search: %q\n", query)
+	if !*oneline {
+		fmt.Fprintf(out, "search: %q\n", query)
+	}
 	var hits []view.Hit
 	if have != "" {
 		vectors, err := client.Embed(context.Background(), []string{embed.QueryText(client.Model(), query)})
@@ -110,31 +121,40 @@ func handleSearch(args []string) {
 			fail("%v", err)
 		}
 		for i, h := range found {
-			if i == 0 {
-				fmt.Println("results:")
-			}
-			printValue("  - ", "file", displayPath(h.Path, cwd))
-			printValue("    ", "lines", fmt.Sprintf("%d-%d", h.StartLine, h.EndLine))
-			if h.Title != "" {
-				printValue("    ", "in", h.Title)
-			}
-			fmt.Printf("    distance: %.3f\n", h.Distance)
 			hits = append(hits, view.Hit{Path: h.Path, Line: h.StartLine})
+			if *oneline {
+				fmt.Fprintf(out, "%s:%d-%d\t%.3f\t%s\n", displayPath(h.Path, cwd), h.StartLine, h.EndLine, h.Distance, oneLine(h.Title))
+				continue
+			}
+			if i == 0 {
+				fmt.Fprintln(out, "results:")
+			}
+			printValue(out, "  - ", "file", displayPath(h.Path, cwd))
+			printValue(out, "    ", "lines", fmt.Sprintf("%d-%d", h.StartLine, h.EndLine))
+			if h.Title != "" {
+				printValue(out, "    ", "in", h.Title)
+			}
+			fmt.Fprintf(out, "    distance: %.3f\n", h.Distance)
 		}
 	}
 
 	if len(hits) == 0 {
-		fmt.Println("results: []")
+		if !*oneline {
+			fmt.Fprintln(out, "results: []")
+		}
+		done()
 		// Nothing found is most often nothing embedded
 		if kinds, err := st.kinds.ForDir(cwd); err == nil && !kinds[config.IndexEmbeddings] {
 			fmt.Fprintf(os.Stderr, "note: the embeddings index is not switched on for this directory.\n\n%s\n", embeddingsHelp)
 		}
 		return
 	}
-	fmt.Printf("total: %d\n", len(hits))
+	if !*oneline {
+		fmt.Fprintf(out, "total: %d\n", len(hits))
+	}
 
 	if mode != "" {
-		fmt.Println()
-		renderHits(hits, mode, cwd, *noIndex)
+		fmt.Fprintln(out)
+		renderHits(out, hits, mode, cwd, *noIndex)
 	}
 }
