@@ -121,10 +121,17 @@ library there. See [The graph](MANUAL.md#the-graph) in the manual.
 
 ## Languages
 
-Go, Python, JavaScript, TypeScript/TSX, Rust, Java, C, C++ and Ruby are
-parsed for definitions, calls and imports. Go calls are resolved exactly with
-the Go type checker, including calls through interfaces. Markdown, HTML and
-XML fold into an outline but define no symbols.
+Go, Python, JavaScript, TypeScript/TSX, Rust, Java, C, C++, Ruby and Motorola
+68000 assembly are parsed for definitions, calls and imports. Go calls are
+resolved exactly with the Go type checker, including calls through interfaces.
+Markdown, HTML and XML fold into an outline but define no symbols.
+
+In 68000 assembly (`.s`, `.asm`, `.i`, in the syntax of the Amiga assemblers)
+a definition is a global label and the lines up to the next one: a `FUNCTION`
+when code follows the label, a `STRUCT` when data does. Macros are functions
+too. `jsr` and `bsr` are calls, and so is a jump or branch to another global
+label; `jsr _LVOAllocMem(a6)` is a call of `_LVOAllocMem`. Assembly for
+another processor in a file with one of these extensions is left alone.
 
 ## Installation
 

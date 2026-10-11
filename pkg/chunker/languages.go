@@ -19,6 +19,8 @@ import (
 	tree_sitter_ruby "github.com/tree-sitter/tree-sitter-ruby/bindings/go"
 	tree_sitter_rust "github.com/tree-sitter/tree-sitter-rust/bindings/go"
 	tree_sitter_typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
+
+	tree_sitter_m68k "github.com/wouteroostervld/chainsaw/pkg/chunker/m68k"
 )
 
 type set map[string]bool
@@ -66,6 +68,15 @@ type langSpec struct {
 	// describe fills in what the generic code cannot derive; false rejects the node
 	describe func(b *builder, n *sitter.Node, d *def) bool
 
+	// Assembly has no definition nodes: a definition is a label and the lines
+	// up to the next one
+	label      func(b *builder, n *sitter.Node) bool // The node is a label that starts a definition
+	remark     func(b *builder, n *sitter.Node) bool // The node is a comment, though its kind says otherwise
+	labelKinds set                                   // Kinds of label nodes, whether they start a definition or not
+	dataKinds  set                                   // Kinds that make what a label names data and not code
+	// target names the label an instruction calls or jumps to; "" when it does neither
+	target func(b *builder, n *sitter.Node, sc scope) string
+
 	once sync.Once
 	lang *sitter.Language
 }
@@ -76,7 +87,7 @@ func (s *langSpec) language() *sitter.Language {
 }
 
 // sourceExtensions are file extensions that may appear in import paths
-var sourceExtensions = setOf(".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".h", ".hh", ".hpp", ".hxx", ".py", ".rb")
+var sourceExtensions = setOf(".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".h", ".hh", ".hpp", ".hxx", ".py", ".rb", ".s", ".asm", ".i")
 
 var importSeparators = regexp.MustCompile(`::|[/.\\]`)
 
@@ -511,6 +522,93 @@ var rubySpec = &langSpec{
 	),
 }
 
+// m68kLocal reports whether a label is local to the global label above it:
+// .loop, 1$, or \@ inside a macro
+func m68kLocal(name string) bool {
+	return strings.HasPrefix(name, ".") || strings.HasSuffix(name, "$") || strings.Contains(name, `\`)
+}
+
+// m68kBranches are the instructions that transfer control to their last operand
+var m68kBranches = setOf(
+	"jsr", "jmp", "bsr", "bra",
+	"bhi", "bls", "bcc", "bhs", "bcs", "blo", "bne", "beq", "bvc", "bvs", "bpl", "bmi", "bge", "blt", "bgt", "ble",
+	"dbt", "dbf", "dbra", "dbhi", "dbls", "dbcc", "dbhs", "dbcs", "dblo", "dbne", "dbeq", "dbvc", "dbvs", "dbpl",
+	"dbmi", "dbge", "dblt", "dbgt", "dble",
+)
+
+// m68kLabel returns the name of a label, or "" when the node is not one
+func m68kLabel(b *builder, n *sitter.Node) string {
+	if kind := n.Kind(); kind != "label" && kind != "external_label" {
+		return ""
+	}
+	return b.text(n.ChildByFieldName("name"))
+}
+
+// m68kTarget returns the label an instruction calls or jumps to. A jump
+// counts as a call when it leaves the definition it is in: that is how one
+// routine continues in another. A call through a register with a named
+// offset, jsr _LVOAllocMem(a6), is a call of that name.
+func m68kTarget(b *builder, n *sitter.Node, sc scope) string {
+	if n.Kind() != "instruction" {
+		return ""
+	}
+	mnemonic := strings.ToLower(b.text(n.ChildByFieldName("mnemonic")))
+	operands := n.ChildByFieldName("operands")
+	if !m68kBranches[mnemonic] || operands == nil || operands.NamedChildCount() == 0 {
+		return ""
+	}
+
+	target := operands.NamedChild(operands.NamedChildCount() - 1)
+	switch target.Kind() {
+	case "offset_address":
+		target = target.ChildByFieldName("offset")
+	case "absolute_value":
+		target = target.ChildByFieldName("value")
+	}
+	if target == nil || target.Kind() != "symbol" {
+		return ""
+	}
+	// The grammar takes the size of an absolute address, Start.l, as part of the name
+	name := b.text(target)
+	if n := len(name); n > 2 && name[n-2] == '.' && strings.ContainsRune("lwLW", rune(name[n-1])) {
+		name = name[:n-2]
+	}
+	if m68kLocal(name) || !isIdentifier(name) {
+		return ""
+	}
+	if mnemonic != "jsr" && mnemonic != "bsr" && sc.sym >= 0 && b.file.Symbols[sc.sym].Name == name {
+		return "" // A loop
+	}
+	return name
+}
+
+// Motorola 68000 assembly, in the syntax of the Amiga assemblers (vasm,
+// Devpac, AsmOne). Global labels are the definitions; local labels belong to
+// the one above them.
+var m68kSpec = &langSpec{
+	name:        "m68k",
+	grammar:     tree_sitter_m68k.Language,
+	comment:     ";",
+	defs:        map[string]defKind{"macro_definition": function},
+	leading:     setOf("comment"),
+	calls:       map[string]string{"macro_call": "name"},
+	importKinds: setOf("include"),
+	imports: func(b *builder, n *sitter.Node) {
+		b.addImport("", b.text(n.ChildByFieldName("path")), "")
+	},
+	label: func(b *builder, n *sitter.Node) bool {
+		name := m68kLabel(b, n)
+		return name != "" && name[0] != '*' && !m68kLocal(name)
+	},
+	// A line that holds only a * is a comment, which the grammar reads as a label
+	remark: func(b *builder, n *sitter.Node) bool {
+		return strings.HasPrefix(m68kLabel(b, n), "*")
+	},
+	labelKinds: setOf("label", "external_label"),
+	dataKinds:  setOf("data_constant", "data_space", "include_bin"),
+	target:     m68kTarget,
+}
+
 // Markdown is split along its headings by markdownSections; it has no grammar
 var markdownSpec = &langSpec{
 	name:       "markdown",
@@ -563,6 +661,9 @@ var extensions = map[string]*langSpec{
 	".hpp":      cppSpec,
 	".hxx":      cppSpec,
 	".rb":       rubySpec,
+	".s":        m68kSpec,
+	".asm":      m68kSpec,
+	".i":        m68kSpec,
 }
 
 func init() {
