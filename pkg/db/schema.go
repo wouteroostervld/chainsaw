@@ -1,8 +1,9 @@
 package db
 
 // SchemaVersion identifies the layout of the database. A database written by
-// another version is not migrated: the index is cheap to rebuild.
-const SchemaVersion = "3.1.0"
+// another version is not migrated, unless initSchema says how: the index is
+// cheap to rebuild.
+const SchemaVersion = "3.2.0"
 
 // schema holds the DDL statements, in dependency order
 var schema = []string{
@@ -118,6 +119,14 @@ var schema = []string{
 	// Names whose definitions changed; references to them need resolving again
 	`CREATE TABLE IF NOT EXISTS symbol_dirty (
     name TEXT PRIMARY KEY
+);`,
+
+	// Where the references of a project may lead outside it: the directories
+	// it follows its imports into
+	`CREATE TABLE IF NOT EXISTS project_follows (
+    root TEXT NOT NULL,
+    dir TEXT NOT NULL,
+    PRIMARY KEY (root, dir)
 );`,
 }
 

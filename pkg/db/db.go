@@ -22,6 +22,12 @@ var registerDriver sync.Once
 type DB struct {
 	conn *pool
 	path string
+
+	// Resolving references in batches; see DeferResolving. Changed only by
+	// who is writing.
+	deferring int // Callers that put resolving off
+	every     int // Files to store before resolving anyway
+	stored    int // Files stored since references were last resolved
 }
 
 // pool is the connections to the database, with a queue for writing. SQLite
@@ -139,17 +145,11 @@ func (db *DB) initSchema() error {
 		}
 	case err != nil:
 		return fmt.Errorf("failed to read schema version: %w", err)
-	case version == "3.0.0":
-		// 3.1.0 adds what is kept per kind of index. What 3.0.0 indexed is
-		// the graph.
-		if _, err := tx.Exec(`
-			INSERT OR IGNORE INTO file_modules (file_id, module, mod_time)
-			SELECT id, 'graph', last_mod_time FROM files WHERE status = 'indexed'
-		`); err != nil {
-			return fmt.Errorf("failed to upgrade schema: %w", err)
-		}
-		if _, err := tx.Exec("UPDATE meta SET value = ? WHERE key = ?", SchemaVersion, MetaKeySchemaVersion); err != nil {
-			return fmt.Errorf("failed to upgrade schema: %w", err)
+	case version == "3.0.0", version == "3.1.0":
+		// 3.1.0 added what is kept per kind of index; what 3.0.0 indexed was
+		// the graph, which 3.2.0 builds anew
+		if err := upgradeProjects(tx); err != nil {
+			return err
 		}
 	case version != SchemaVersion:
 		return fmt.Errorf("database %s has schema %s, this version needs %s; remove it and index again", db.path, version, SchemaVersion)
@@ -157,6 +157,33 @@ func (db *DB) initSchema() error {
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit schema transaction: %w", err)
+	}
+	return nil
+}
+
+// upgradeProjects brings a database to 3.2.0, in which a reference stays
+// within its project. Before, the files that are not in a repository were
+// one project together, and an import could lead into any project, so the
+// graph holds edges that are no longer made, most of them from that one
+// project. Taking those out one file at a time costs far more than building
+// the graph anew, so it is emptied and every file is indexed again. What the
+// other kinds of index hold stays.
+func upgradeProjects(tx *sql.Tx) error {
+	for _, table := range []string{"graph_edges", "symbol_refs", "symbol_defs", "symbol_dirty", "entities", "chunks"} {
+		if _, err := tx.Exec("DROP TABLE IF EXISTS " + table); err != nil {
+			return fmt.Errorf("failed to upgrade schema: %w", err)
+		}
+	}
+	for _, stmt := range schema {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("failed to upgrade schema: %w", err)
+		}
+	}
+	if _, err := tx.Exec("DELETE FROM file_modules WHERE module = 'graph'"); err != nil {
+		return fmt.Errorf("failed to upgrade schema: %w", err)
+	}
+	if _, err := tx.Exec("UPDATE meta SET value = ? WHERE key = ?", SchemaVersion, MetaKeySchemaVersion); err != nil {
+		return fmt.Errorf("failed to upgrade schema: %w", err)
 	}
 	return nil
 }

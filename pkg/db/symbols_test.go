@@ -281,6 +281,7 @@ func TestSelectTargets(t *testing.T) {
 	tests := []struct {
 		name       string
 		ref        pendingRef
+		follows    []string // Directories the project of the reference follows
 		wantIDs    []int64
 		wantWeight float64
 	}{
@@ -303,10 +304,43 @@ func TestSelectTargets(t *testing.T) {
 			wantWeight: weightExact,
 		},
 		{
-			name:       "import reaches into other projects",
+			name:       "import within another project",
 			ref:        pendingRef{relationType: "calls", importBase: "lib", path: "/other/main.go", root: "/other"},
 			wantIDs:    []int64{6},
 			wantWeight: weightExact,
+		},
+		{
+			name:       "import does not lead out of the project",
+			ref:        pendingRef{relationType: "calls", importBase: "lib", path: "/third/main.go", root: "/third"},
+			wantIDs:    nil,
+			wantWeight: weightExact,
+		},
+		{
+			name:       "import leads into a directory the project follows",
+			ref:        pendingRef{relationType: "calls", importBase: "lib", path: "/third/main.go", root: "/third"},
+			follows:    []string{"/other"},
+			wantIDs:    []int64{6},
+			wantWeight: weightExact,
+		},
+		{
+			name:       "type checker leads into a directory the project follows",
+			ref:        pendingRef{relationType: "calls", targetPath: "/other/lib/util.go", path: "/third/main.go", root: "/third"},
+			follows:    []string{"/other"},
+			wantIDs:    []int64{6},
+			wantWeight: weightExact,
+		},
+		{
+			name:       "type checker does not lead out of the project",
+			ref:        pendingRef{relationType: "calls", targetPath: "/other/lib/util.go", path: "/third/main.go", root: "/third"},
+			wantIDs:    nil,
+			wantWeight: weightExact,
+		},
+		{
+			name:       "a name alone never leaves the project",
+			ref:        pendingRef{relationType: "calls", member: true, path: "/third/main.go", root: "/third"},
+			follows:    []string{"/other", "/proj"},
+			wantIDs:    nil,
+			wantWeight: weightByName,
 		},
 		{
 			name:       "plain call stays within the project",
@@ -354,7 +388,7 @@ func TestSelectTargets(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ids, weight := selectTargets(tt.ref, cands)
+			ids, weight := selectTargets(tt.ref, cands, tt.follows)
 			if !reflect.DeepEqual(ids, tt.wantIDs) {
 				t.Errorf("targets = %v, want %v", ids, tt.wantIDs)
 			}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/wouteroostervld/chainsaw/pkg/chunker"
 	"github.com/wouteroostervld/chainsaw/pkg/config"
@@ -16,6 +17,7 @@ type GraphStore interface {
 	InsertChunk(fileID int64, startLine, endLine int) (int64, error)
 	DeleteChunksForFile(fileID int64) error
 	StoreFileSymbols(fileID int64, root string, defs []db.SymbolDef, refs []db.SymbolRef) error
+	SetProjectFollows(root string, dirs []string) error
 }
 
 // Graph is the module that builds the code graph: it parses a file, stores
@@ -23,14 +25,20 @@ type GraphStore interface {
 // It needs nothing but the file, and takes milliseconds.
 type Graph struct {
 	GoTypes bool // Resolve the calls in Go files with the Go type checker
+	// Which project a file is in and what the project follows. Without it a
+	// file is in its repository, or else its directory, and follows nothing.
+	Projects *Projects
 
 	store   GraphStore
 	goTypes *gotypes.Resolver
+
+	mu       sync.Mutex
+	followed map[string]bool // Projects whose follow setting is stored
 }
 
 // NewGraph creates the graph module
 func NewGraph(store GraphStore) *Graph {
-	return &Graph{GoTypes: true, store: store, goTypes: gotypes.NewResolver()}
+	return &Graph{GoTypes: true, store: store, goTypes: gotypes.NewResolver(), followed: make(map[string]bool)}
 }
 
 func (g *Graph) Name() string { return config.IndexGraph }
@@ -81,6 +89,25 @@ func (g *Graph) Index(ctx context.Context, src *Source) error {
 	return nil
 }
 
+// follow stores where the references of a project may lead outside it, the
+// first time a file of the project is indexed
+func (g *Graph) follow(root string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.followed[root] {
+		return nil
+	}
+	dirs, err := g.Projects.Follows(root)
+	if err != nil {
+		return err
+	}
+	if err := g.store.SetProjectFollows(root, dirs); err != nil {
+		return err
+	}
+	g.followed[root] = true
+	return nil
+}
+
 // storeSymbols stores the definitions, calls and imports of a parsed file as
 // graph entities and edges
 func (g *Graph) storeSymbols(fileID int64, filePath string, parsed *chunker.File, chunkIDs []int64) error {
@@ -122,7 +149,11 @@ func (g *Graph) storeSymbols(fileID int64, filePath string, parsed *chunker.File
 		})
 	}
 
-	if err := g.store.StoreFileSymbols(fileID, projectRoot(filePath), defs, refs); err != nil {
+	root := g.Projects.Root(filePath)
+	if err := g.follow(root); err != nil {
+		return err
+	}
+	if err := g.store.StoreFileSymbols(fileID, root, defs, refs); err != nil {
 		return err
 	}
 	slog.Debug("Stored symbols", "file_id", fileID, "definitions", len(defs), "references", len(refs))

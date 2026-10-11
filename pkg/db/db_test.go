@@ -78,33 +78,57 @@ func TestOpen_OtherSchemaVersion(t *testing.T) {
 	}
 }
 
-func TestOpen_UpgradesSchema3_0(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "test.db")
+func TestOpen_UpgradesSchema(t *testing.T) {
+	for _, from := range []string{"3.0.0", "3.1.0"} {
+		t.Run(from, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "test.db")
 
-	db, err := Open(Config{Path: dbPath})
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
-	fileID, err := db.UpsertFile("/src/a.go", 42, "hash")
-	if err != nil {
-		t.Fatalf("Failed to upsert file: %v", err)
-	}
-	if err := db.SetMeta(MetaKeySchemaVersion, "3.0.0"); err != nil {
-		t.Fatalf("Failed to set meta: %v", err)
-	}
-	db.Close()
+			db, err := Open(Config{Path: dbPath})
+			if err != nil {
+				t.Fatalf("Failed to open database: %v", err)
+			}
+			fileID, chunkID := addFile(t, db, "/src/a.go")
+			defs := []SymbolDef{{Name: "f", EntityType: "FUNCTION", ChunkID: chunkID, Parent: -1}}
+			refs := []SymbolRef{{Source: 0, RelationType: "calls", Name: "g", ExternalName: "g"}}
+			if err := db.StoreFileSymbols(fileID, "", defs, refs); err != nil {
+				t.Fatalf("StoreFileSymbols failed: %v", err)
+			}
+			for _, module := range []string{"graph", "embeddings"} {
+				if err := db.SetFileModule(fileID, module, 42); err != nil {
+					t.Fatalf("SetFileModule failed: %v", err)
+				}
+			}
+			if err := db.SetMeta(MetaKeySchemaVersion, from); err != nil {
+				t.Fatalf("Failed to set meta: %v", err)
+			}
+			db.Close()
 
-	// What 3.0.0 indexed is the graph, and does not need indexing again
-	db, err = Open(Config{Path: dbPath})
-	if err != nil {
-		t.Fatalf("Open refused a 3.0.0 database: %v", err)
-	}
-	defer db.Close()
-	if version, _ := db.GetMeta(MetaKeySchemaVersion); version != SchemaVersion {
-		t.Errorf("schema version = %s, want %s", version, SchemaVersion)
-	}
-	if modules, _ := db.FileModules(fileID); len(modules) != 1 || modules["graph"] != 42 {
-		t.Errorf("modules after the upgrade = %v, want graph at 42", modules)
+			// The graph of before is built anew: its files are still known,
+			// and are indexed again. What other kinds of index hold stays.
+			db, err = Open(Config{Path: dbPath})
+			if err != nil {
+				t.Fatalf("Open refused a %s database: %v", from, err)
+			}
+			defer db.Close()
+			if version, _ := db.GetMeta(MetaKeySchemaVersion); version != SchemaVersion {
+				t.Errorf("schema version = %s, want %s", version, SchemaVersion)
+			}
+			if modules, _ := db.FileModules(fileID); len(modules) != 1 || modules["embeddings"] != 42 {
+				t.Errorf("modules after the upgrade = %v, want embeddings at 42 only", modules)
+			}
+			for _, table := range []string{"chunks", "entities", "graph_edges", "symbol_defs", "symbol_refs"} {
+				var count int
+				if err := db.conn.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
+					t.Fatalf("Failed to count %s: %v", table, err)
+				}
+				if count != 0 {
+					t.Errorf("%s has %d rows after the upgrade, want 0", table, count)
+				}
+			}
+			if n, _ := db.CountFiles(); n != 1 {
+				t.Errorf("files after the upgrade = %d, want 1", n)
+			}
+		})
 	}
 }
 

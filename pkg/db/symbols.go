@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 )
 
@@ -128,13 +130,61 @@ func (db *DB) StoreFileSymbols(fileID int64, root string, defs []SymbolDef, refs
 		}
 	}
 
-	if err := resolveSymbols(tx); err != nil {
-		return err
+	// Resolving costs as much for one file as for hundreds that define the
+	// same names, so who indexes many files puts it off
+	resolve := db.deferring == 0 || db.stored+1 >= db.every
+	if resolve {
+		if err := resolveSymbols(tx); err != nil {
+			return err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit symbols: %w", err)
 	}
+	if db.stored++; resolve {
+		db.stored = 0
+	}
+	return nil
+}
+
+// DeferResolving puts off linking references to their targets while many
+// files are indexed: it is done once every so many files, and when the
+// function that is returned is called, which must be done. Until then the
+// calls and imports of the files stored since are not in the graph. What is
+// left when the process dies is resolved the next time symbols are stored.
+func (db *DB) DeferResolving(every int) (done func() error) {
+	db.conn.writing.Lock()
+	db.deferring++
+	db.every = every
+	db.conn.writing.Unlock()
+
+	return func() error {
+		db.conn.writing.Lock()
+		db.deferring--
+		db.conn.writing.Unlock()
+		return db.ResolveSymbols()
+	}
+}
+
+// ResolveSymbols links the references that wait for it to their targets
+func (db *DB) ResolveSymbols() error {
+	db.conn.writing.Lock()
+	defer db.conn.writing.Unlock()
+
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := resolveSymbols(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit symbols: %w", err)
+	}
+	db.stored = 0
 	return nil
 }
 
@@ -262,6 +312,11 @@ func resolveSymbols(tx *sql.Tx) error {
 		}
 	}
 
+	follows, err := queryFollows(tx)
+	if err != nil {
+		return err
+	}
+
 	wanted := make(map[edgeKey]float64)
 	var order []edgeKey // The edges wanted, in the order they were found
 	candidates := make(map[string][]candidate)
@@ -274,7 +329,7 @@ func resolveSymbols(tx *sql.Tx) error {
 			candidates[r.name] = cands
 		}
 
-		targets, weight := selectTargets(r, cands)
+		targets, weight := selectTargets(r, cands, follows[r.root])
 		relation := r.relationType
 		if weight < weightExact && relation == relationCalls {
 			relation = RelationMayCall
@@ -475,10 +530,18 @@ func externalEntity(tx *sql.Tx, r pendingRef) (int64, error) {
 // the match is. The syntax tree gives the name and, often, where it comes
 // from; it does not give types, so what remains is matched by name against
 // the definitions closest to the reference.
-func selectTargets(r pendingRef, cands []candidate) ([]int64, float64) {
+//
+// A reference stays within its project. What says where the target comes
+// from, an import or a type checker, can also lead into the directories the
+// project follows: its libraries. A match by name alone never leaves the
+// project, since a name that is common is defined in every library.
+func selectTargets(r pendingRef, cands []candidate, follows []string) ([]int64, float64) {
 	var pool []candidate
 	for _, c := range cands {
-		if (c.entityType == EntityTypePackage) == (r.relationType == relationImports) {
+		if (c.entityType == EntityTypePackage) != (r.relationType == relationImports) {
+			continue
+		}
+		if c.root == r.root || ((r.targetPath != "" || r.importBase != "") && within(c.path, follows)) {
 			pool = append(pool, c)
 		}
 	}
@@ -511,9 +574,6 @@ func selectTargets(r pendingRef, cands []candidate) ([]int64, float64) {
 		return ids, weightExact
 	}
 
-	// Without an import, a name refers to something in the same project
-	pool = filter(func(c candidate) bool { return c.root == r.root })
-
 	// Called on self/this or on a named type: the definition must be in that container
 	if r.container != "" {
 		if matched := filter(func(c candidate) bool { return c.container == r.container }); len(matched) > 0 {
@@ -538,6 +598,79 @@ func selectTargets(r pendingRef, cands []candidate) ([]int64, float64) {
 		return ids, weightExact
 	}
 	return ids, weightByName
+}
+
+// within reports whether a file is in one of the directories
+func within(path string, dirs []string) bool {
+	for _, dir := range dirs {
+		if strings.HasPrefix(path, dir+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// queryFollows returns the directories each project follows its imports into
+func queryFollows(tx *sql.Tx) (map[string][]string, error) {
+	rows, err := tx.Query("SELECT root, dir FROM project_follows ORDER BY root, dir")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query followed directories: %w", err)
+	}
+	defer rows.Close()
+
+	follows := make(map[string][]string)
+	for rows.Next() {
+		var root, dir string
+		if err := rows.Scan(&root, &dir); err != nil {
+			return nil, fmt.Errorf("failed to scan followed directory: %w", err)
+		}
+		follows[root] = append(follows[root], dir)
+	}
+	return follows, rows.Err()
+}
+
+// SetProjectFollows records the directories a project follows its imports
+// into. When they are not the ones it followed before, the references of the
+// project that an import or a type checker placed are resolved again.
+func (db *DB) SetProjectFollows(root string, dirs []string) error {
+	db.conn.writing.Lock()
+	defer db.conn.writing.Unlock()
+
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	follows, err := queryFollows(tx)
+	if err != nil {
+		return err
+	}
+	want := append([]string(nil), dirs...)
+	sort.Strings(want)
+	if slices.Equal(follows[root], want) {
+		return nil
+	}
+
+	if _, err := tx.Exec("DELETE FROM project_follows WHERE root = ?", root); err != nil {
+		return fmt.Errorf("failed to set followed directories: %w", err)
+	}
+	for _, dir := range want {
+		if _, err := tx.Exec("INSERT OR IGNORE INTO project_follows (root, dir) VALUES (?, ?)", root, dir); err != nil {
+			return fmt.Errorf("failed to set followed directories: %w", err)
+		}
+	}
+	if _, err := tx.Exec(`
+		INSERT OR IGNORE INTO symbol_dirty (name)
+		SELECT DISTINCT name FROM symbol_refs
+		WHERE root = ? AND (import_base != '' OR target_path != '')
+	`, root); err != nil {
+		return fmt.Errorf("failed to mark symbols dirty: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit followed directories: %w", err)
+	}
+	return nil
 }
 
 // matchesImport reports whether a file can be what an import path ending in

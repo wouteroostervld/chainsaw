@@ -173,7 +173,21 @@ func (s *settings) indexer(database *db.DB, only ...string) (*indexer.Indexer, e
 		embedder = client
 	}
 
-	idx := indexer.New(database, s.kinds.For, indexer.NewGraph(database), indexer.NewEmbeddings(database, embedder))
+	graph := indexer.NewGraph(database)
+	var include []string
+	for _, dir := range s.profile.Include {
+		if abs, err := config.NormalizePath(dir); err == nil {
+			include = append(include, abs)
+		}
+	}
+	graph.Projects = &indexer.Projects{
+		Include: include,
+		Follow: func(root string) ([]string, error) {
+			return s.profile.FollowFor(root, &config.RealFileSystem{})
+		},
+	}
+
+	idx := indexer.New(database, s.kinds.For, graph, indexer.NewEmbeddings(database, embedder))
 	if len(only) > 0 {
 		idx = idx.Only(only...)
 	}

@@ -37,6 +37,16 @@ profiles:
       graph: true        # definitions, calls, imports: for "chainsaw query"
       embeddings: false  # a vector per chunk of code: for "chainsaw search"
 
+    # Where the references of a project may lead outside it. By default
+    # nowhere: a call is matched with the definitions of its own project
+    # (its repository). What is named here is followed through imports, if
+    # it is in the index. A project can set this in its .config.yaml.
+    # follow:
+    #   - venv       # the project's Python virtual environment, or the active one
+    #   - go         # the Go standard library and the module cache
+    #   - headers    # the header files of the system
+    #   - ~/src/lib  # any directory
+
     # The model that makes embeddings. Only needed, and only used, where the
     # embeddings index is on. Naming a model switches nothing on.
     embeddings:

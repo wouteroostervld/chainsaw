@@ -411,8 +411,36 @@ calls into them fall back to the rules below.
 target follows from the source: a function in the same directory, a name
 reached through an import, a method on `self`/`this` or on a named type.
 When only the name is known, as with a method call on a variable, the edge is
-`may_call` and goes to every definition in the same repository with that
+`may_call` and goes to every definition in the same project with that
 name.
+
+**A reference stays within its project.** A project is the directory of a
+repository (where `.git` is). A Python virtual environment is a project of
+its own, also inside a repository. A file in neither belongs to the
+directory right below the included directory it is under, so an unpacked
+source tree in `~/Projects` is a project too. Without this a call would be
+matched with whatever has that name in everything you have ever indexed.
+
+**Following libraries** is off by default and switched on with `follow:`,
+in the profile or in the `.config.yaml` in the directory of a project:
+
+```yaml
+follow:
+  - venv           # the Python virtual environment of the project
+  - go             # the Go standard library and the module cache
+  - headers        # the header files of the system
+  - ~/src/shared   # any directory
+```
+
+`venv` is the environment in `.venv`, `venv` or `env` of the project, or
+else the one that is active (`$VIRTUAL_ENV`). What is named through an
+import, or placed by the Go type checker, can then also lead to a definition
+in those directories. A match by name alone never leaves the project: a name
+like `get` is defined in every library. Following only says where references
+may lead; the library has to be in the index, which it is after `chainsaw
+index` on its directory (for example `chainsaw index .venv`). A change of
+`follow` is picked up the next time a file of the project is indexed;
+`chainsaw index --force .` does that at once.
 
 A graph built from syntax cannot see calls made through reflection, or
 strings that name a function. `chainsaw grep` can.
@@ -432,6 +460,9 @@ profiles:
     index:
       graph: true
       embeddings: false
+    # Where references may lead outside their project, see above. Nowhere
+    # by default.
+    # follow: [venv, go, headers]
     # The model for the embeddings index; needed only when it is on
     # embeddings:
     #   model: nomic-embed-text
@@ -450,7 +481,7 @@ profiles:
 ```
 
 Write directory names without a trailing slash. A project's `.config.yaml`
-can add to `exclude` and `blacklist` and set `index`. Of the settings of
+can add to `exclude` and `blacklist` and set `index` and `follow`. Of the settings of
 older versions, `embedding_model` still names the model when `embeddings:`
 does not (and, as before, switches nothing on); `chunk_size`, `overlap`,
 `graph_driver` and `llm_*` are ignored.

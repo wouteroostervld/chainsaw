@@ -21,6 +21,10 @@ type Profile struct {
 	// is not named keeps its default.
 	Index map[string]bool `yaml:"index,omitempty"`
 
+	// Where the references of a project may lead outside it (see Follow*).
+	// Nowhere when not set.
+	Follow []string `yaml:"follow,omitempty"`
+
 	// The model that makes embeddings. Needed for the embeddings index.
 	Embeddings *EmbeddingsConfig `yaml:"embeddings,omitempty"`
 
@@ -50,6 +54,11 @@ type LocalConfig struct {
 
 	// Kinds of index switched on or off for the files below this directory
 	Index map[string]bool `yaml:"index,omitempty"`
+
+	// Where the references of this project may lead outside it, in place of
+	// what the profile says. Read from the .config.yaml in the directory of
+	// the project only.
+	Follow []string `yaml:"follow,omitempty"`
 }
 
 // MergedConfig represents the final runtime configuration after merging global + local

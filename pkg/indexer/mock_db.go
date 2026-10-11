@@ -77,6 +77,10 @@ func (m *MockDatabase) DeleteChunksForFile(fileID int64) error {
 	return nil
 }
 
+func (m *MockDatabase) SetProjectFollows(root string, dirs []string) error {
+	return nil
+}
+
 func (m *MockDatabase) StoreFileSymbols(fileID int64, root string, defs []db.SymbolDef, refs []db.SymbolRef) error {
 	m.SymbolDefs = append(m.SymbolDefs, defs...)
 	m.SymbolRefs = append(m.SymbolRefs, refs...)

@@ -173,13 +173,25 @@ type syncStats struct {
 	pending   int // Files that need indexing but were left because of the limit
 }
 
+// resolveEvery is how many files are stored between two times the references
+// are resolved, so that a long run shows in the graph as it goes
+const resolveEvery = 500
+
 // syncIndex brings the index up to date with the given files and with the
 // files under the given directories: new and modified files are indexed, and
 // the index forgets files that are gone from disk. Nothing on disk is changed.
 // A file is indexed in the kinds of index that are switched on for it and do
 // not hold it as it is now.
-func syncIndex(database *db.DB, st *settings, roots []string, opts syncOptions) (syncStats, error) {
-	var stats syncStats
+func syncIndex(database *db.DB, st *settings, roots []string, opts syncOptions) (stats syncStats, err error) {
+	// References are linked to their targets once for many files, which is
+	// what makes indexing a tree take minutes and not hours
+	resolve := database.DeferResolving(resolveEvery)
+	defer func() {
+		if resolveErr := resolve(); err == nil {
+			err = resolveErr
+		}
+	}()
+
 	profile := st.profile
 	idx, err := st.indexer(database, opts.only...)
 	if err != nil {
