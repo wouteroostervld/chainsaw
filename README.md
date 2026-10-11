@@ -5,13 +5,18 @@
 Chainsaw parses your source files and answers three kinds of question
 without reading whole files: *where is this text, and what is it inside of*,
 *what does this file look like*, and *what calls what*. That needs no
-embeddings, no model and no GPU: indexing is parsing, and takes seconds.
+embeddings, no model and no GPU: indexing is parsing, and takes seconds for
+a project.
 
 A fourth question, *where is the code that does this*, does need a model.
 Search by meaning is there for who wants it, as a separate kind of index that
 is off until you switch it on.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+**Status:** under active development. Commands, configuration and the format
+of the index still change from one version to the next; an index made by an
+older version is built again, or has to be removed.
 
 ## Commands
 
@@ -91,6 +96,29 @@ index:
 A command only builds the kind of index it uses: `query` never waits for a
 model. See [Kinds of index](MANUAL.md#kinds-of-index) in the manual.
 
+## Projects
+
+A call is matched with the definitions of its own project: the repository
+the file is in (where `.git` is), a Python virtual environment, or else the
+directory right below one of your included directories. Without that boundary a call
+of `get` would be linked to everything of that name in every tree you ever
+indexed.
+
+Where references may lead outside a project is yours to say, with `follow:`
+in `~/.chainsaw/config.yaml` or in the `.config.yaml` of a project:
+
+```yaml
+follow:
+  - venv           # the project's Python virtual environment, or the active one
+  - go             # the Go standard library and the module cache
+  - headers        # the header files of the system
+  - ~/src/shared   # any directory
+```
+
+Only what is named through an import, or placed by the Go type checker, is
+followed, and only into what is in the index: `chainsaw index .venv` puts a
+library there. See [The graph](MANUAL.md#the-graph) in the manual.
+
 ## Languages
 
 Go, Python, JavaScript, TypeScript/TSX, Rust, Java, C, C++ and Ruby are
@@ -130,6 +158,10 @@ source files ── tree-sitter ─┬► definitions, calls, imports ──► 
 The index lives in `~/.chainsaw/graph.db`. It holds names, locations, edges
 and, when switched on, vectors. It holds no source text, and can be deleted
 at any time.
+
+A daemon is optional: `chainsaw daemon start` watches the directories you
+configured and indexes what changes, so that a query finds the index up to
+date already. See [The index](MANUAL.md#the-index) in the manual.
 
 ## License
 

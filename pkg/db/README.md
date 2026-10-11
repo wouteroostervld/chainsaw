@@ -1,163 +1,60 @@
-# Database Layer - Implementation Complete
+# pkg/db
 
-## What Was Built
+The index: one SQLite file, `~/.chainsaw/graph.db`. It holds names,
+locations, edges and, when the embeddings index is on, vectors. It holds no
+source text; code is read from the files when a query asks for it. The index
+can be deleted at any time and is built again from the source.
 
-A complete SQLite database layer for the Chainsaw GraphRAG system, providing:
+## Files
 
-- **File Registry**: Track indexed files with change detection
-- **Vector Storage**: Store and search embedding chunks (sqlite-vec ready)
-- **Knowledge Graph**: Build and traverse relations between chunks
-- **WAL Mode**: Concurrent daemon-write/CLI-read operations
-- **Security**: 0600 permissions, parameterized queries, FK constraints
+| File | Holds |
+|---|---|
+| `schema.go` | The tables, and the schema version |
+| `db.go` | Opening the database, upgrading an older one, the queue for writing |
+| `files.go` | The files the index knows, and which kinds of index hold each |
+| `chunks.go` | Where the chunks of a file are; counts |
+| `symbols.go` | Definitions, references, and linking the one to the other |
+| `embeddings.go` | Vectors, in a table that is made when the first are stored |
+| `interface.go` | What the indexer needs of the database |
 
-## File Structure
+## Tables
 
-```
-pkg/db/
-├── schema.go         # DDL for all tables and indexes
-├── db.go             # Database initialization and lifecycle
-├── files.go          # File registry operations (7 methods)
-├── chunks.go         # Vector chunk operations (6 methods)
-├── graph.go          # Knowledge graph operations (11 methods)
-├── interface.go      # Database interface for DI
-├── db_test.go        # Initialization tests (8 tests)
-├── files_test.go     # File operations tests (7 tests)
-└── graph_test.go     # Graph operations tests (11 tests)
+| Table | Holds |
+|---|---|
+| `meta` | The schema version, and the model the embeddings were made with |
+| `files` | Every indexed file, with its modification time |
+| `file_modules` | Which kinds of index hold a file, and as of when |
+| `chunks` | The line ranges a file folds into |
+| `entities` | The nodes of the graph: definitions, and placeholders for what is called but not indexed |
+| `graph_edges` | The edges: `calls`, `may_call`, `imports`, `defines`, `implements` |
+| `symbol_defs` | The definitions of each file, with the project they are in |
+| `symbol_refs` | The calls and imports of each file, as written, before they are linked |
+| `symbol_dirty` | Names whose definitions changed; references to them are linked again |
+| `project_follows` | The directories a project follows its imports into |
+| `embedding_chunks` | A vector per chunk (sqlite-vec); only there when embeddings are on |
 
-examples/
-└── database-usage.go # Complete working example
-```
+## How references become edges
 
-## Key Capabilities
+A file's definitions and references are stored as the parser found them.
+Linking is a separate step, `resolveSymbols`: it takes the references that
+were never linked and those to names whose definitions changed, picks their
+targets (`selectTargets`) and writes the difference with the edges that are
+there. A reference stays within its project unless the project follows the
+directory the target is in.
 
-### 1. File Tracking
-```go
-// Track files to avoid redundant re-indexing
-fileID, _ := db.UpsertFile("/path/to/file.go", modTime, hash)
-changed, _ := db.HasFileChanged(path, modTime, newHash)
-files, _ := db.ListFiles(ListFilesOptions{Limit: 100})
-```
+Linking after every file is what a single change needs. Indexing many files
+puts it off with `DeferResolving` and links once for the lot.
 
-### 2. Vector Search
-```go
-// Store and search embeddings
-chunkID, _ := db.InsertChunk(fileID, content, embedding)
-results, _ := db.SearchSimilar(queryEmbedding, limit)
-```
+## Writing
 
-### 3. Knowledge Graph
-```go
-// Build and traverse relations
-db.UpsertEdge(source, target, 0.85, "calls", "llama3")
-neighbors, _ := db.GetNeighbors(GetNeighborsOptions{
-    ChunkID:  1,
-    MaxDepth: 2,
-    MinWeight: 0.6,
-})
-```
+SQLite lets one connection write at a time. The writers of one process wait
+for each other in a queue (`pool`); between processes it is SQLite's busy
+timeout of ten seconds that decides. Reading never waits: the database is in
+WAL mode.
 
-### 4. Model Switching
-```go
-// Clean up edges from old model
-deleted, _ := db.DeleteEdgesByModel("old-model")
-// Re-index with new model
-db.UpsertEdge(source, target, weight, relation, "new-model")
-```
+## Schema changes
 
-## Test Results
-
-```
-✓ 26/26 tests passing
-✓ 58.9% statement coverage
-✓ 1,053 lines production code
-✓ 1,131 lines test code (1.07:1 ratio)
-✓ Zero failures
-```
-
-## Database Schema
-
-### Tables
-- `meta`: Configuration and version tracking
-- `files`: Indexed file registry with hashes
-- `vec_chunks`: Vector embeddings (virtual table via sqlite-vec)
-- `graph_edges`: Knowledge graph relations with model tracking
-
-### Key Features
-- WAL mode for concurrent access
-- Foreign key constraints enforced
-- Indexes on frequently queried columns
-- 0600 file permissions for security
-
-## Usage Example
-
-```bash
-# Run the example
-go run examples/database-usage.go
-
-# Output demonstrates:
-# - Database creation (WAL mode, permissions)
-# - File tracking with change detection
-# - Knowledge graph building
-# - Graph traversal (recursive CTE)
-# - Model switching workflow
-# - Health checks and statistics
-```
-
-## Integration Points
-
-The database layer is ready to integrate with:
-
-1. **Daemon** (`cmd/chainsawd/`)
-   - File watcher → `HasFileChanged()` → Skip or index
-   - Indexer → `UpsertFile()` → `InsertChunk()` → `UpsertEdge()`
-
-2. **CLI** (`cmd/chainsaw/`)
-   - Search query → `SearchSimilar()` → `GetNeighbors()` → Format results
-   - Stats command → `CountFiles()`, `CountChunks()`, `CountEdges()`
-
-3. **Indexer** (`pkg/indexer/`)
-   - File chunking → Ollama API → `InsertChunk()`
-
-4. **Graph Extractor** (`pkg/graph/`)
-   - Chunk analysis → LLM API → Parse relations → `UpsertEdge()`
-
-## Dependencies
-
-```
-go get github.com/mattn/go-sqlite3  # SQLite driver
-```
-
-Optional (for production vector search):
-- sqlite-vec extension (loadable module)
-
-## Testing Strategy
-
-Tests use `SkipVecTable: true` flag to bypass sqlite-vec requirement during testing. This allows:
-- Fast test execution without extension
-- Easy CI/CD integration
-- Focus on business logic coverage
-
-Production deployments should use sqlite-vec for optimal performance.
-
-## Performance Characteristics
-
-- **WAL Mode**: Multiple readers + single writer concurrency
-- **Connection Pool**: 5 max open, 2 idle connections
-- **Indexes**: Fast lookups on path, hash, chunk relations
-- **Recursive CTE**: Efficient multi-hop graph traversal
-
-## Security
-
-- Database file created with **0600 permissions** (user only)
-- All queries use **parameterized placeholders** (no SQL injection)
-- Foreign key constraints **enforced**
-- Path validation before file operations
-
-## Next Steps
-
-Database layer is complete. Choose next component:
-
-1. **Daemon Implementation**: Integrate DB + fsnotify + Ollama
-2. **CLI Implementation**: Build search interface
-3. **Indexer Pipeline**: Chunking + embedding generation
-4. **Search Engine**: Vector similarity + graph expansion
+`SchemaVersion` is checked when the database is opened. An older database is
+upgraded where `initSchema` says how, which for the graph means emptying it
+so that every file is indexed again; any other version is refused with the
+advice to remove the file.
