@@ -121,10 +121,14 @@ library there. See [The graph](MANUAL.md#the-graph) in the manual.
 
 ## Languages
 
-Go, Python, JavaScript, TypeScript/TSX, Rust, Java, C, C++ and Ruby are
+Go, Python, JavaScript, TypeScript/TSX, Rust, Java, C, C++, Ruby and BCPL are
 parsed for definitions, calls and imports. Go calls are resolved exactly with
 the Go type checker, including calls through interfaces. Markdown, HTML and
 XML fold into an outline but define no symbols.
+
+In BCPL (`.b`, `.bcpl`) a definition is a function or a routine, whether it is
+introduced by `LET` or by `AND`, and a `GET` is an import. Reserved words are
+upper case. Headers named `.h` are read as C++.
 
 ## Installation
 

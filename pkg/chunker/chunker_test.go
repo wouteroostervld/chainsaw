@@ -350,6 +350,22 @@ end
 			stub:    "class Dog < Animal # ... chunk: lines 1-11",
 			ref:     Ref{Source: 1, Relation: RelationCalls, Name: "wag", Container: "Dog", External: "wag", Member: true},
 		},
+		{
+			path: "a.b",
+			src: `GET "libhdr"
+
+LET fact(n) = n = 0 -> 1, n * fact(n - 1)
+
+AND show(upb) BE
+$( FOR i = 0 TO upb DO
+     writef("%N*N", fact(i))
+   newline()
+$)
+`,
+			symbols: map[string]string{"fact": TypeFunction, "show": TypeFunction},
+			stub:    "AND show(upb) BE // ... chunk: lines 5-9",
+			ref:     Ref{Source: 1, Relation: RelationCalls, Name: "fact", External: "fact"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -371,6 +387,41 @@ end
 				t.Errorf("missing ref %+v in %+v", tt.ref, f.Refs)
 			}
 		})
+	}
+}
+
+// The definitions of a BCPL declaration are chained with AND. The comment
+// above the declaration is about the first of them.
+func TestParse_BCPLDeclaration(t *testing.T) {
+	f := parse(t, "/proj/queue.b", `GET "libhdr"
+
+// Puts x at the end of q.
+LET append(q, x) BE
+$( LET cell = getvec(1)
+   link(q, cell)
+   cell!1 := x
+$)
+
+// Joins a cell to the queue.
+AND link(q, cell) BE
+$( cell!0 := 0
+   !(q!1) := cell
+   q!1 := cell
+$)
+`)
+
+	_, first := findSymbol(t, f, "append")
+	if first.StartLine != 3 || first.EndLine != 8 || first.Signature != "LET append(q, x) BE" {
+		t.Errorf("append = %+v", first)
+	}
+	_, second := findSymbol(t, f, "link")
+	if second.StartLine != 10 || second.EndLine != 15 || second.Signature != "AND link(q, cell) BE" {
+		t.Errorf("link = %+v", second)
+	}
+
+	want := Ref{Source: -1, Relation: RelationImports, Name: "libhdr", ImportBase: "libhdr", External: "libhdr"}
+	if !hasRef(f, want) {
+		t.Errorf("missing ref %+v in %+v", want, f.Refs)
 	}
 }
 
