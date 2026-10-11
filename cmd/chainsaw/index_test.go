@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -391,5 +392,42 @@ func TestLoadSettings_BrokenConfiguration(t *testing.T) {
 	configure(t, "    index:\n      vibes: true\n")
 	if _, err := loadSettings(); err == nil {
 		t.Error("an unknown kind of index was accepted")
+	}
+}
+
+func TestSyncIndex_Stopped(t *testing.T) {
+	dir, database := project(t)
+	st, err := loadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A run that is told to stop indexes nothing more and says what is left
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	stats, err := syncIndex(database, st, []string{dir}, syncOptions{ctx: ctx})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if stats.indexed != 0 || stats.pending != 2 {
+		t.Errorf("stopped run = %+v, want nothing indexed and 2 to go", stats)
+	}
+
+	// The next run picks up where it stopped
+	if got := sync(t, database, dir, syncOptions{}); got != (syncStats{indexed: 2}) {
+		t.Errorf("run after a stopped one = %+v, want 2 indexed", got)
+	}
+}
+
+func TestStartupScan(t *testing.T) {
+	dir, database := project(t)
+	st, err := loadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	startupScan(context.Background(), database, st, []string{dir}, []string{"graph"})
+	if n := definitions(t, database); n != 4 {
+		t.Errorf("%d definitions after the scan, want 4", n)
 	}
 }

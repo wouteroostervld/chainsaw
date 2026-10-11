@@ -22,7 +22,7 @@ type File struct {
 
 // UpsertFile inserts or updates a file record
 func (db *DB) UpsertFile(path string, modTime int64, contentHash string) (int64, error) {
-	slog.Debug("UpsertFile called", "path", path, "mod_time", modTime, "hash", contentHash[:min(8, len(contentHash))])
+	slog.Debug("UpsertFile called", "file", path, "mod_time", modTime, "hash", contentHash[:min(8, len(contentHash))])
 
 	_, err := db.conn.Exec(`
 		INSERT INTO files (path, last_mod_time, content_hash, indexed_at)
@@ -43,7 +43,7 @@ func (db *DB) UpsertFile(path string, modTime int64, contentHash string) (int64,
 	if err != nil {
 		return 0, fmt.Errorf("failed to get file ID: %w", err)
 	}
-	slog.Debug("UpsertFile result", "path", path, "file_id", fileID)
+	slog.Debug("UpsertFile result", "file", path, "file_id", fileID)
 	return fileID, nil
 }
 
@@ -188,7 +188,7 @@ func (db *DB) HasFileChanged(path string, modTime int64, contentHash string) (bo
 
 // MarkFilePending marks a file as pending for indexing
 func (db *DB) MarkFilePending(path string, modTime int64, contentHash string) error {
-	slog.Debug("MarkFilePending called", "path", path)
+	slog.Debug("MarkFilePending called", "file", path)
 	_, err := db.conn.Exec(`
 		INSERT INTO files (path, last_mod_time, content_hash, status, queued_at, retry_count)
 		VALUES (?, ?, ?, 'pending', ?, 0)
@@ -311,7 +311,7 @@ func (db *DB) ResetStuckProcessing() error {
 
 	rows, _ := result.RowsAffected()
 	if rows > 0 {
-		fmt.Printf("Reset %d files from processing to pending\n", rows)
+		slog.Info("Requeued files left in processing", "count", rows)
 	}
 
 	return nil

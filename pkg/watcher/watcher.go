@@ -3,6 +3,7 @@ package watcher
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"time"
@@ -117,7 +118,7 @@ func (w *FileWatcher) Start(ctx context.Context) error {
 				return fmt.Errorf("watcher errors channel closed")
 			}
 			// Log error but continue watching
-			fmt.Printf("watcher error: %v\n", err)
+			slog.Error("Watcher error", "error", err)
 		}
 	}
 }

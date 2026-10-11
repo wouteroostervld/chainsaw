@@ -68,7 +68,7 @@ func ShouldIndexFile(filePath string, blacklist []string, whitelist []string) (b
 		return false, err
 	}
 
-	slog.Debug("Checking file filter", "path", absPath, "blacklist_count", len(blacklist))
+	slog.Debug("Checking file filter", "file", absPath, "blacklist_count", len(blacklist))
 
 	// Check blacklist first
 	matchesBlacklist := false
@@ -82,14 +82,14 @@ func ShouldIndexFile(filePath string, blacklist []string, whitelist []string) (b
 		if matched {
 			matchesBlacklist = true
 			matchedPattern = pattern
-			slog.Debug("Matched blacklist pattern", "pattern", pattern, "path", absPath)
+			slog.Debug("Matched blacklist pattern", "pattern", pattern, "file", absPath)
 			break
 		}
 	}
 
 	// If doesn't match blacklist, allow
 	if !matchesBlacklist {
-		slog.Debug("No blacklist match - allowing file", "path", absPath)
+		slog.Debug("No blacklist match, allowing file", "file", absPath)
 		return true, nil
 	}
 
@@ -100,13 +100,13 @@ func ShouldIndexFile(filePath string, blacklist []string, whitelist []string) (b
 			continue
 		}
 		if matched {
-			slog.Debug("Whitelist exception matched - allowing file", "pattern", pattern, "path", absPath)
+			slog.Debug("Whitelist exception matched, allowing file", "pattern", pattern, "file", absPath)
 			return true, nil
 		}
 	}
 
 	// Matched blacklist and no whitelist exception - reject
-	slog.Debug("Rejecting file", "path", absPath, "blacklist_pattern", matchedPattern)
+	slog.Debug("Rejecting file", "file", absPath, "blacklist_pattern", matchedPattern)
 	return false, nil
 }
 

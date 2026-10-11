@@ -51,7 +51,7 @@ func NewIndexWorker(cfg *Config) *IndexWorker {
 
 // Start begins processing files from the queue
 func (w *IndexWorker) Start(ctx context.Context) error {
-	slog.Info("Index worker started", "poll_interval", w.pollInterval, "batch_size", w.batchSize)
+	slog.Debug("Index worker started", "poll_interval", w.pollInterval, "batch_size", w.batchSize)
 
 	ticker := time.NewTicker(w.pollInterval)
 	defer ticker.Stop()
@@ -62,7 +62,7 @@ func (w *IndexWorker) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("Index worker stopped")
+			slog.Debug("Index worker stopped")
 			return ctx.Err()
 		case <-ticker.C:
 			w.processBatch(ctx)
@@ -111,7 +111,7 @@ func (w *IndexWorker) processFile(ctx context.Context, file *db.File) {
 			slog.Error("Failed to forget removed file", "file", file.Path, "error", err)
 			return
 		}
-		slog.Info("removed file detected: " + file.Path)
+		slog.Debug("Removed file detected", "file", file.Path)
 		return
 	}
 
@@ -127,7 +127,7 @@ func (w *IndexWorker) processFile(ctx context.Context, file *db.File) {
 		return
 	}
 
-	slog.Info("Indexed file", "file", file.Path)
+	slog.Debug("Indexed file", "file", file.Path)
 }
 
 // handleFailure handles indexing failures with retry logic
