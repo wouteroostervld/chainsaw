@@ -616,6 +616,114 @@ func TestParse_MarkupFoldsLargeElements(t *testing.T) {
 	}
 }
 
+const m68kSource = `; Startup
+	include	"exec/types.i"
+
+	XREF	_LVOAllocMem
+
+SIZE	equ	12
+
+PUSHM	macro
+	movem.l	\\1,-(sp)
+	endm
+
+* Entry point
+_Start:
+	move.l	4.w,a6
+	jsr	_LVOAllocMem(a6)
+	bsr.s	Helper
+	bsr	.local
+	PUSHM	d0-d7
+.local	moveq	#0,d0
+	rts
+
+*
+* Counts down
+*
+Helper
+	lea	Table(pc),a0
+.loop	dbra	d0,.loop
+	bne.s	Helper
+	beq.s	Other
+	jmp	Other.l
+
+; Where the helpers are
+Table:	dc.l	Helper,Other
+	dc.w	0
+
+Other::	rts
+`
+
+func TestParse_M68k(t *testing.T) {
+	f := parse(t, "boot.s", m68kSource)
+
+	// Global labels are the definitions; .local and .loop are places inside them
+	want := []struct {
+		name, etype string
+		start, end  int
+	}{
+		{"PUSHM", TypeFunction, 8, 10},
+		{"_Start", TypeFunction, 13, 20},
+		{"Helper", TypeFunction, 22, 30},
+		{"Table", TypeStruct, 32, 34},
+		{"Other", TypeFunction, 36, 36},
+	}
+	if len(f.Symbols) != len(want) {
+		t.Fatalf("got %d symbols, want %d: %+v", len(f.Symbols), len(want), f.Symbols)
+	}
+	for i, w := range want {
+		s := f.Symbols[i]
+		if s.Name != w.name || s.Type != w.etype || s.StartLine != w.start || s.EndLine != w.end {
+			t.Errorf("symbol %d is %s %s lines %d-%d, want %s %s lines %d-%d",
+				i, s.Type, s.Name, s.StartLine, s.EndLine, w.etype, w.name, w.start, w.end)
+		}
+	}
+
+	for _, stub := range []string{"_Start: ; ... chunk: lines 13-20", "Helper ; ... chunk: lines 22-30"} {
+		if !strings.Contains(f.Chunks[0].Content, stub) {
+			t.Errorf("skeleton does not contain %q:\n%s", stub, f.Chunks[0].Content)
+		}
+	}
+
+	start, _ := findSymbol(t, f, "_Start")
+	helper, _ := findSymbol(t, f, "Helper")
+	for _, ref := range []Ref{
+		{Source: -1, Relation: RelationImports, Name: "types", ImportBase: "types", External: "exec/types.i"},
+		{Source: start, Relation: RelationCalls, Name: "_LVOAllocMem", External: "_LVOAllocMem"},
+		{Source: start, Relation: RelationCalls, Name: "Helper", External: "Helper"},
+		{Source: start, Relation: RelationCalls, Name: "PUSHM", External: "PUSHM"},
+		{Source: helper, Relation: RelationCalls, Name: "Other", External: "Other"},
+	} {
+		if !hasRef(f, ref) {
+			t.Errorf("missing ref %+v in %+v", ref, f.Refs)
+		}
+	}
+	// Neither a branch to a local label nor a loop back to the start is a call
+	for _, r := range f.Refs {
+		if r.Name == ".local" || r.Name == ".loop" || (r.Source == helper && r.Name == "Helper") {
+			t.Errorf("unexpected ref %+v", r)
+		}
+	}
+}
+
+func TestParse_OtherAssembly(t *testing.T) {
+	src := `	.file	"clib.c"
+	.text
+	.globl	main
+	.type	main, @function
+main:
+	pushq	%rbp
+	movq	%rsp, %rbp
+	movl	$0, %eax
+	call	puts@PLT
+	popq	%rbp
+	ret
+`
+	if _, ok := Parse("clib.s", []byte(src), 0); ok {
+		t.Error("Parse took x86 assembly for m68k")
+	}
+}
+
 func TestParse_Unsupported(t *testing.T) {
 	if _, ok := Parse("notes.txt", []byte("Notes\n"), 0); ok {
 		t.Error("Parse accepted a text file")
