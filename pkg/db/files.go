@@ -102,25 +102,17 @@ func (db *DB) GetFileByID(id int64) (*File, error) {
 }
 
 // ForgetFile drops the index's record of a file. The file on disk is not
-// touched: this is for a file that is already gone from it.
+// touched: this is for a file that is already gone from it. A file the index
+// does not have is forgotten already: the scan and the worker of the daemon
+// both forget what is gone from disk, and the one that comes second must not
+// fail on it.
 func (db *DB) ForgetFile(path string) error {
 	if _, err := db.conn.Exec("DELETE FROM file_modules WHERE file_id IN (SELECT id FROM files WHERE path = ?)", path); err != nil {
 		return fmt.Errorf("failed to delete file: %w", err)
 	}
-	result, err := db.conn.Exec("DELETE FROM files WHERE path = ?", path)
-	if err != nil {
+	if _, err := db.conn.Exec("DELETE FROM files WHERE path = ?", path); err != nil {
 		return fmt.Errorf("failed to delete file: %w", err)
 	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-
-	if rows == 0 {
-		return fmt.Errorf("file not found: %s", path)
-	}
-
 	return nil
 }
 

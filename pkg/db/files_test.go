@@ -182,10 +182,13 @@ func TestForgetFile(t *testing.T) {
 		t.Errorf("File should be deleted")
 	}
 
-	// Delete non-existent file should error
-	err = db.ForgetFile("/nonexistent")
-	if err == nil {
-		t.Errorf("Expected error deleting non-existent file")
+	// A file that is forgotten already, as when the scan and the worker of
+	// the daemon both find it gone, is not an error
+	if err := db.ForgetFile(path); err != nil {
+		t.Errorf("Forgetting a file a second time failed: %v", err)
+	}
+	if err := db.ForgetFile("/nonexistent"); err != nil {
+		t.Errorf("Forgetting a file that was never indexed failed: %v", err)
 	}
 }
 
