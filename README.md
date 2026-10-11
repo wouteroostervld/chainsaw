@@ -100,9 +100,9 @@ model. See [Kinds of index](MANUAL.md#kinds-of-index) in the manual.
 
 A call is matched with the definitions of its own project: the repository
 the file is in (where `.git` is), a Python virtual environment, or else the
-directory right below one of your included directories. Without that boundary a call
-of `get` would be linked to everything of that name in every tree you ever
-indexed.
+directory right below one of your included directories. Without that
+boundary a call of `get` would be linked to everything of that name in every
+tree you ever indexed.
 
 Where references may lead outside a project is yours to say, with `follow:`
 in `~/.chainsaw/config.yaml` or in the `.config.yaml` of a project:
