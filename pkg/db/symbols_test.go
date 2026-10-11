@@ -176,6 +176,98 @@ func TestDeleteChunksForFile_RemovesGraph(t *testing.T) {
 	}
 }
 
+// edgeRows returns the row of each may_call edge leaving the named entity, by
+// the container of its target
+func edgeRows(t *testing.T, db *DB, source string) map[string]int64 {
+	t.Helper()
+	rows, err := db.conn.Query(`
+		SELECT d.container, g.rowid
+		FROM graph_edges g
+		JOIN entities e ON e.id = g.source_entity_id
+		JOIN symbol_defs d ON d.entity_id = g.target_entity_id
+		WHERE e.name = ? AND g.relation_type = ?
+	`, source, RelationMayCall)
+	if err != nil {
+		t.Fatalf("Failed to query edges: %v", err)
+	}
+	defer rows.Close()
+
+	found := make(map[string]int64)
+	for rows.Next() {
+		var container string
+		var rowid int64
+		if err := rows.Scan(&container, &rowid); err != nil {
+			t.Fatalf("Failed to scan edge: %v", err)
+		}
+		found[container] = rowid
+	}
+	return found
+}
+
+func TestStoreFileSymbols_KeepsEdgesThatDoNotChange(t *testing.T) {
+	db := openSymbolsDB(t)
+
+	// Two types with a method of the same name, and a call that can be to either
+	methodIn := func(path, container string) (int64, func()) {
+		fileID, _ := addFile(t, db, path)
+		return fileID, func() {
+			chunkID, err := db.InsertChunk(fileID, 1, 10)
+			if err != nil {
+				t.Fatalf("Failed to insert chunk: %v", err)
+			}
+			defs := []SymbolDef{{Name: "Get", Container: container, EntityType: "METHOD", ChunkID: chunkID, Parent: -1}}
+			if err := db.StoreFileSymbols(fileID, "/proj", defs, nil); err != nil {
+				t.Fatalf("StoreFileSymbols failed: %v", err)
+			}
+		}
+	}
+	_, storeCache := methodIn("/proj/cache.go", "Cache")
+	storeCache()
+	queueFile, storeQueue := methodIn("/proj/queue.go", "Queue")
+	storeQueue()
+
+	callerFile, callerChunk := addFile(t, db, "/proj/main.go")
+	callerDefs := []SymbolDef{{Name: "Run", EntityType: "FUNCTION", ChunkID: callerChunk, Parent: -1}}
+	callerRefs := []SymbolRef{{Source: 0, RelationType: "calls", Name: "Get", ExternalName: "Get", Member: true}}
+	if err := db.StoreFileSymbols(callerFile, "/proj", callerDefs, callerRefs); err != nil {
+		t.Fatalf("StoreFileSymbols failed: %v", err)
+	}
+	// A later edge, so that a row that is written again cannot get the
+	// number it had
+	otherFile, otherChunk := addFile(t, db, "/proj/other.go")
+	otherDefs := []SymbolDef{
+		{Name: "other", EntityType: "PACKAGE", ChunkID: otherChunk, Parent: -1},
+		{Name: "Helper", EntityType: "FUNCTION", ChunkID: otherChunk, Parent: 0},
+	}
+	if err := db.StoreFileSymbols(otherFile, "/proj", otherDefs, nil); err != nil {
+		t.Fatalf("StoreFileSymbols failed: %v", err)
+	}
+
+	before := edgeRows(t, db, "Run")
+	if len(before) != 2 {
+		t.Fatalf("may_call edges = %v, want one to Cache and one to Queue", before)
+	}
+
+	// Indexing one of the two again resolves the call again. Its edge to the
+	// other is as it was and is not written a second time.
+	if err := db.DeleteChunksForFile(queueFile); err != nil {
+		t.Fatalf("DeleteChunksForFile failed: %v", err)
+	}
+	storeQueue()
+
+	after := edgeRows(t, db, "Run")
+	if len(after) != 2 {
+		t.Fatalf("may_call edges after indexing again = %v, want one to Cache and one to Queue", after)
+	}
+	if after["Cache"] != before["Cache"] {
+		t.Errorf("edge to Cache.Get was written again: row %d became %d", before["Cache"], after["Cache"])
+	}
+	want := []edge{{"Cache.Get", "METHOD", weightByName}, {"Queue.Get", "METHOD", weightByName}}
+	if got := edgesFrom(t, db, "Run", RelationMayCall); !reflect.DeepEqual(got, want) {
+		t.Errorf("may_call after indexing again = %v, want %v", got, want)
+	}
+}
+
 func TestSelectTargets(t *testing.T) {
 	cands := []candidate{
 		{entityID: 1, entityType: "FUNCTION", path: "/proj/app/util.go", root: "/proj"},

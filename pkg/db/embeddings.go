@@ -92,6 +92,10 @@ func (db *DB) InsertEmbeddings(fileID int64, model string, chunks []EmbeddingChu
 		return fmt.Errorf("%s now gives vectors of length %d, the index holds vectors of length %d", model, dim, haveDim)
 	}
 
+	// A transaction writes; see pool
+	db.conn.writing.Lock()
+	defer db.conn.writing.Unlock()
+
 	tx, err := db.conn.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -136,6 +140,10 @@ func (db *DB) DeleteEmbeddings(fileID int64) error {
 // ResetEmbeddings removes every embedding, and with it the choice of model.
 // module is the kind of index that is recorded as holding them.
 func (db *DB) ResetEmbeddings(module string) error {
+	// A transaction writes; see pool
+	db.conn.writing.Lock()
+	defer db.conn.writing.Unlock()
+
 	tx, err := db.conn.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)

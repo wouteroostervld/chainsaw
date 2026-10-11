@@ -68,6 +68,10 @@ func qualifiedName(name, container string) string {
 // import says so. The file's previous symbols must have been removed with
 // DeleteChunksForFile.
 func (db *DB) StoreFileSymbols(fileID int64, root string, defs []SymbolDef, refs []SymbolRef) error {
+	// A transaction writes; see pool
+	db.conn.writing.Lock()
+	defer db.conn.writing.Unlock()
+
 	tx, err := db.conn.Begin()
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
@@ -144,7 +148,9 @@ func deleteFileGraph(tx *sql.Tx, fileID int64) error {
 		"INSERT OR IGNORE INTO symbol_dirty (name) SELECT name FROM symbol_defs WHERE file_id = ?",
 		"DELETE FROM symbol_defs WHERE file_id = ?",
 		"DELETE FROM symbol_refs WHERE file_id = ?",
-		"DELETE FROM graph_edges WHERE chunk_id IN " + fileChunks,
+		// An edge carries the chunk of the entity it leaves, and there is an
+		// index on that entity where there is none on the chunk
+		"DELETE FROM graph_edges WHERE source_entity_id IN (SELECT id FROM entities WHERE chunk_id IN " + fileChunks + ")",
 		"DELETE FROM entities WHERE chunk_id IN " + fileChunks,
 	}
 	for _, stmt := range statements {
@@ -222,25 +228,42 @@ func resolveSymbols(tx *sql.Tx) error {
 		return fmt.Errorf("error iterating symbol references: %w", err)
 	}
 
-	// Drop the edges of references that are resolved again, before adding any
-	// new ones: references from one symbol to the same name share their edges.
+	// The edges of references that are resolved again are replaced by what
+	// they resolve to now. Most of them resolve to what they did before, so
+	// only the difference is written: a file that defines a common name has
+	// thousands of references to it resolved again, and nearly all of their
+	// edges stay as they are.
+	edges := newEdgeSet(tx)
+	stale := make(map[edgeKey]bool)
 	for _, r := range refs {
 		if !r.resolved {
 			continue
 		}
-		if _, err := tx.Exec(`
-			DELETE FROM graph_edges
-			WHERE source_entity_id = ? AND chunk_id = ? AND relation_type IN (?, ?)
-			  AND target_entity_id IN (
-				SELECT entity_id FROM symbol_defs WHERE name = ?
-				UNION
-				SELECT id FROM entities WHERE chunk_id = 0 AND name = ?
-			  )
-		`, r.sourceID, r.chunkID, r.relationType, RelationMayCall, r.name, r.externalName); err != nil {
-			return fmt.Errorf("failed to delete stale edges: %w", err)
+		// References from one symbol to the same name share their edges
+		existing, err := edges.from(r.sourceID)
+		if err != nil {
+			return err
+		}
+		defs, err := edges.definitions(r.name)
+		if err != nil {
+			return err
+		}
+		externals, err := edges.externals(r.externalName)
+		if err != nil {
+			return err
+		}
+		for key := range existing {
+			if key.chunkID != r.chunkID || (key.relation != r.relationType && key.relation != RelationMayCall) {
+				continue
+			}
+			if defs[key.target] || externals[key.target] {
+				stale[key] = true
+			}
 		}
 	}
 
+	wanted := make(map[edgeKey]float64)
+	var order []edgeKey // The edges wanted, in the order they were found
 	candidates := make(map[string][]candidate)
 	for _, r := range refs {
 		cands, ok := candidates[r.name]
@@ -267,9 +290,11 @@ func resolveSymbols(tx *sql.Tx) error {
 			targets, weight, relation = []int64{id}, weightExact, r.relationType
 		}
 		for _, target := range targets {
-			if err := upsertEdge(tx, r.sourceID, target, relation, r.chunkID, weight); err != nil {
-				return err
+			key := edgeKey{source: r.sourceID, target: target, relation: relation, chunkID: r.chunkID}
+			if _, seen := wanted[key]; !seen {
+				order = append(order, key)
 			}
+			wanted[key] = weight
 		}
 		if !r.resolved {
 			if _, err := tx.Exec("UPDATE symbol_refs SET resolved = 1 WHERE id = ?", r.id); err != nil {
@@ -278,10 +303,125 @@ func resolveSymbols(tx *sql.Tx) error {
 		}
 	}
 
+	for key := range stale {
+		if _, keep := wanted[key]; keep {
+			continue
+		}
+		if _, err := tx.Exec(`
+			DELETE FROM graph_edges
+			WHERE source_entity_id = ? AND target_entity_id = ? AND relation_type = ? AND chunk_id = ?
+		`, key.source, key.target, key.relation, key.chunkID); err != nil {
+			return fmt.Errorf("failed to delete stale edge: %w", err)
+		}
+	}
+	for _, key := range order {
+		existing, err := edges.from(key.source)
+		if err != nil {
+			return err
+		}
+		if weight, ok := existing[key]; ok && weight.Valid && weight.Float64 == wanted[key] {
+			continue
+		}
+		if err := upsertEdge(tx, key.source, key.target, key.relation, key.chunkID, wanted[key]); err != nil {
+			return err
+		}
+	}
+
 	if _, err := tx.Exec("DELETE FROM symbol_dirty"); err != nil {
 		return fmt.Errorf("failed to clear dirty symbols: %w", err)
 	}
 	return nil
+}
+
+// edgeKey is what tells one edge from another
+type edgeKey struct {
+	source   int64
+	target   int64
+	relation string
+	chunkID  int64
+}
+
+// edgeSet reads the edges that are there before references are resolved
+// again, each symbol and each name once.
+type edgeSet struct {
+	tx        *sql.Tx
+	bySource  map[int64]map[edgeKey]sql.NullFloat64
+	defs      map[string]map[int64]bool
+	placeheld map[string]map[int64]bool
+}
+
+func newEdgeSet(tx *sql.Tx) *edgeSet {
+	return &edgeSet{
+		tx:        tx,
+		bySource:  make(map[int64]map[edgeKey]sql.NullFloat64),
+		defs:      make(map[string]map[int64]bool),
+		placeheld: make(map[string]map[int64]bool),
+	}
+}
+
+// from returns the edges leaving an entity, with their weights
+func (s *edgeSet) from(sourceID int64) (map[edgeKey]sql.NullFloat64, error) {
+	if edges, ok := s.bySource[sourceID]; ok {
+		return edges, nil
+	}
+	rows, err := s.tx.Query(`
+		SELECT target_entity_id, relation_type, chunk_id, weight
+		FROM graph_edges WHERE source_entity_id = ?
+	`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query edges: %w", err)
+	}
+	defer rows.Close()
+
+	edges := make(map[edgeKey]sql.NullFloat64)
+	for rows.Next() {
+		key := edgeKey{source: sourceID}
+		var weight sql.NullFloat64
+		if err := rows.Scan(&key.target, &key.relation, &key.chunkID, &weight); err != nil {
+			return nil, fmt.Errorf("failed to scan edge: %w", err)
+		}
+		edges[key] = weight
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating edges: %w", err)
+	}
+	s.bySource[sourceID] = edges
+	return edges, nil
+}
+
+// definitions returns the entities of the definitions with a name
+func (s *edgeSet) definitions(name string) (map[int64]bool, error) {
+	return s.ids(s.defs, name, "SELECT entity_id FROM symbol_defs WHERE name = ?")
+}
+
+// externals returns the placeholder entities with a name
+func (s *edgeSet) externals(name string) (map[int64]bool, error) {
+	return s.ids(s.placeheld, name, "SELECT id FROM entities WHERE chunk_id = 0 AND name = ?")
+}
+
+func (s *edgeSet) ids(cache map[string]map[int64]bool, name, query string) (map[int64]bool, error) {
+	if ids, ok := cache[name]; ok {
+		return ids, nil
+	}
+	rows, err := s.tx.Query(query, name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query entities: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan entity: %w", err)
+		}
+		ids[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating entities: %w", err)
+	}
+	cache[name] = ids
+	return ids, nil
 }
 
 func queryCandidates(tx *sql.Tx, name string) ([]candidate, error) {
