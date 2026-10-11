@@ -112,3 +112,33 @@ func TestEmbeddingSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestDaemonScan(t *testing.T) {
+	on, off := true, false
+	for _, tt := range []struct {
+		name   string
+		daemon *DaemonConfig
+		want   string // Kinds, comma-separated; empty for no scan
+	}{
+		// Nothing configured: scan, and only for what costs nothing but parsing
+		{"default", nil, "graph"},
+		{"switched on", &DaemonConfig{Scan: &on}, "graph"},
+		{"switched off", &DaemonConfig{Scan: &off}, ""},
+		{"kinds named", &DaemonConfig{ScanKinds: []string{"graph", "embeddings"}}, "graph,embeddings"},
+		// Off stays off whatever kinds are named
+		{"off with kinds", &DaemonConfig{Scan: &off, ScanKinds: []string{"graph"}}, ""},
+	} {
+		kinds, err := (&Profile{Daemon: tt.daemon}).DaemonScan()
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if got := strings.Join(kinds, ","); got != tt.want {
+			t.Errorf("%s: scan for %q, want %q", tt.name, got, tt.want)
+		}
+	}
+
+	// A kind that does not exist is a mistake, not something to pass over
+	if _, err := (&Profile{Daemon: &DaemonConfig{ScanKinds: []string{"grahp"}}}).DaemonScan(); err == nil {
+		t.Error("an unknown kind of index was accepted")
+	}
+}

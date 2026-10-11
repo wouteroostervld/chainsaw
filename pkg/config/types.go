@@ -28,6 +28,9 @@ type Profile struct {
 	// The model that makes embeddings. Needed for the embeddings index.
 	Embeddings *EmbeddingsConfig `yaml:"embeddings,omitempty"`
 
+	// What the daemon does besides watching for changes
+	Daemon *DaemonConfig `yaml:"daemon,omitempty"`
+
 	// Settings of older versions. EmbeddingModel names the model when
 	// Embeddings does not; the others are not used.
 	EmbeddingModel string `yaml:"embedding_model"`
@@ -41,6 +44,18 @@ type EmbeddingsConfig struct {
 	BaseURL  string `yaml:"base_url,omitempty"` // e.g. "http://localhost:11434" or "https://api.openai.com/v1"
 	APIKey   string `yaml:"api_key,omitempty"`
 	Model    string `yaml:"model,omitempty"`
+}
+
+// DaemonConfig sets what the daemon does when it starts. Watching only shows
+// what changes while it runs; the scan finds what changed before.
+type DaemonConfig struct {
+	// Whether to bring the index up to date with the included directories
+	// at startup. On when not set.
+	Scan *bool `yaml:"scan,omitempty"`
+	// The kinds of index the scan fills, of those that are on for a file.
+	// Only the graph when not set: embeddings for a whole tree are a
+	// request to a model for every file, and have to be asked for.
+	ScanKinds []string `yaml:"scan_kinds,omitempty"`
 }
 
 // LocalConfig represents a project-local .config.yaml file

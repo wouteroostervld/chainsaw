@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,12 +114,8 @@ func handleIndex(args []string) {
 	}
 	opts := syncOptions{force: *force, progress: os.Stdout, errors: os.Stderr}
 	if *only != "" {
-		for _, kind := range strings.Split(*only, ",") {
-			kind = strings.TrimSpace(kind)
-			if _, known := config.DefaultIndex()[kind]; !known {
-				fail("--only: unknown kind of index %q (known: graph, embeddings)", kind)
-			}
-			opts.only = append(opts.only, kind)
+		if opts.only, err = config.CheckIndexKinds(strings.Split(*only, ",")); err != nil {
+			fail("--only: %v", err)
 		}
 	}
 
@@ -157,11 +154,43 @@ func handleIndex(args []string) {
 }
 
 type syncOptions struct {
-	only     []string  // The kinds of index to bring up to date; all of them when empty
-	force    bool      // Index files even when they have not been modified
-	limit    int       // Do nothing when more files than this need indexing (0 = no limit)
-	progress io.Writer // Where to report progress on a long run; nil for silence
-	errors   io.Writer // Where to report files that could not be indexed; nil for silence
+	ctx      context.Context // Stops the run between two files when done; nil to run to the end
+	only     []string        // The kinds of index to bring up to date; all of them when empty
+	force    bool            // Index files even when they have not been modified
+	limit    int             // Do nothing when more files than this need indexing (0 = no limit)
+	progress io.Writer       // Where to report progress on a long run; nil for silence
+	errors   io.Writer       // Where to report files that could not be indexed; nil for silence
+	log      *slog.Logger    // Reports to the log instead, as the daemon does; nil for the writers
+}
+
+// removed reports a file the index knew that is gone from disk
+func (o syncOptions) removed(path string) {
+	switch {
+	case o.log != nil:
+		o.log.Debug("Removed file detected", "file", path)
+	case o.progress != nil:
+		fmt.Fprintf(o.progress, "removed file detected: %s\n", displayPath(path, workingDir()))
+	}
+}
+
+// failed reports a file that could not be indexed
+func (o syncOptions) failed(path string, err error) {
+	switch {
+	case o.log != nil:
+		o.log.Warn("File indexing failed", "file", path, "error", err)
+	case o.errors != nil:
+		fmt.Fprintf(o.errors, "  %s: %v\n", displayPath(path, workingDir()), err)
+	}
+}
+
+// progressed reports how far a long run is
+func (o syncOptions) progressed(done, total int) {
+	switch {
+	case o.log != nil:
+		o.log.Info("Scan in progress", "indexed", done, "total", total)
+	case o.progress != nil:
+		fmt.Fprintf(o.progress, "  indexed %d of %d files...\n", done, total)
+	}
 }
 
 type syncStats struct {
@@ -296,9 +325,7 @@ func syncIndex(database *db.DB, st *settings, roots []string, opts syncOptions) 
 			return stats, err
 		}
 		stats.removed++
-		if opts.progress != nil {
-			fmt.Fprintf(opts.progress, "removed file detected: %s\n", displayPath(path, workingDir()))
-		}
+		opts.removed(path)
 	}
 
 	if planErr != nil {
@@ -319,14 +346,19 @@ func syncIndex(database *db.DB, st *settings, roots []string, opts syncOptions) 
 		return stats, err
 	}
 
-	ctx := context.Background()
+	ctx := opts.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	reported := time.Now()
 	inARow := 0 // Files on end that a model would not embed
 	for done, path := range todo {
+		if ctx.Err() != nil {
+			stats.pending = len(todo) - done
+			return stats, ctx.Err()
+		}
 		if err := idx.IndexFile(ctx, path, opts.force); err != nil {
-			if opts.errors != nil {
-				fmt.Fprintf(opts.errors, "  %s: %v\n", displayPath(path, workingDir()), err)
-			}
+			opts.failed(path, err)
 			stats.failed++
 			// A model that is away fails every file the same way
 			var failure *indexer.ModuleError
@@ -339,9 +371,14 @@ func syncIndex(database *db.DB, st *settings, roots []string, opts syncOptions) 
 		}
 		inARow = 0
 		stats.indexed++
-		// Parsing reports every few hundred files; a slow model every few seconds
-		if opts.progress != nil && (stats.indexed%200 == 0 || time.Since(reported) > 5*time.Second) {
-			fmt.Fprintf(opts.progress, "  indexed %d of %d files...\n", stats.indexed, len(todo))
+		// Parsing reports every few hundred files; a slow model every few
+		// seconds. A log is told twice a minute.
+		due := stats.indexed%200 == 0 || time.Since(reported) > 5*time.Second
+		if opts.log != nil {
+			due = time.Since(reported) > 30*time.Second
+		}
+		if due {
+			opts.progressed(stats.indexed, len(todo))
 			reported = time.Now()
 		}
 	}
@@ -370,7 +407,10 @@ func resetEmbeddings(database *db.DB, st *settings, opts syncOptions) error {
 		// In passing, before a search: leave it to be asked for
 		return nil
 	}
-	if opts.progress != nil {
+	switch {
+	case opts.log != nil:
+		opts.log.Info("Embedding model changed, making embeddings again", "had", have, "configured", model)
+	case opts.progress != nil:
 		fmt.Fprintf(opts.progress, "embeddings were made with %s and %s is configured: making them again\n", have, model)
 	}
 	return database.ResetEmbeddings(config.IndexEmbeddings)

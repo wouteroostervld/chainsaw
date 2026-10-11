@@ -53,6 +53,13 @@ profiles:
       model: "nomic-embed-text"            # served by Ollama on localhost
       # base_url: "http://localhost:11434"
 
+    # --- The daemon ---
+    # When it starts, the daemon brings the index up to date with the
+    # included directories, since watching only shows what changes later.
+    daemon:
+      scan: true            # false: only index what changes from now on
+      scan_kinds: [graph]   # add embeddings to have the scan make those too
+
   # A profile that embeds everything, with a hosted model
   semantic:
     include:

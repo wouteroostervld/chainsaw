@@ -293,7 +293,24 @@ have to filter. A path that does not exist is reported, the rest is still
 indexed, and the exit status is 1.
 
 The daemon is optional as well. It watches the `include` directories of your
-configuration and re-indexes files as they change.
+configuration and re-indexes files as they change. Watching only shows what
+changes while it runs, so when it starts it first scans those directories as
+`chainsaw index` would: new and modified files are indexed, and the index
+forgets files that are gone. The scan runs beside the watching and fills the
+graph only; it makes embeddings when you name them:
+
+```yaml
+profiles:
+  default:
+    daemon:
+      scan: true                        # false: only index what changes from now on
+      scan_kinds: [graph, embeddings]   # default: [graph]
+```
+
+`chainsaw daemon start -scan=false` and `-scan-kinds graph,embeddings` do the
+same for one run, and win over the configuration. A kind that is named is
+still only built where it is switched on. Files that change while the daemon
+runs are indexed in every kind that is on for them, whatever the scan does.
 
 The index is `~/.chainsaw/graph.db`. It holds names, locations, edges and,
 when embeddings are on, vectors. It holds no source text: the code a query
@@ -466,9 +483,13 @@ profiles:
     # The model for the embeddings index; needed only when it is on
     # embeddings:
     #   model: nomic-embed-text
-    # Directories the daemon watches
+    # Directories the daemon watches, and scans when it starts
     include:
       - ~/Projects
+    # The scan at startup; these are the defaults
+    daemon:
+      scan: true
+      scan_kinds: [graph]
     # Directory names skipped by grep, index and the daemon
     exclude:
       - node_modules

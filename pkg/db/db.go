@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -200,7 +201,7 @@ func (db *DB) Close() error {
 
 	if err != nil {
 		// Log but don't fail on checkpoint error
-		fmt.Fprintf(os.Stderr, "warning: failed to checkpoint WAL: %v\n", err)
+		slog.Warn("Failed to checkpoint WAL", "error", err)
 	}
 
 	// Mark conn as nil to prevent double-close

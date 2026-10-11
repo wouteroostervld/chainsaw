@@ -49,6 +49,36 @@ func (p *Profile) EmbeddingSettings() EmbeddingsConfig {
 	return e
 }
 
+// DaemonScan returns the kinds of index the daemon brings up to date when it
+// starts, and nil when it is not to scan at all
+func (p *Profile) DaemonScan() ([]string, error) {
+	d := p.Daemon
+	if d == nil {
+		d = &DaemonConfig{}
+	}
+	if d.Scan != nil && !*d.Scan {
+		return nil, nil
+	}
+	if len(d.ScanKinds) == 0 {
+		return []string{IndexGraph}, nil
+	}
+	return CheckIndexKinds(d.ScanKinds)
+}
+
+// CheckIndexKinds returns the given kinds of index, or an error naming the
+// first that does not exist
+func CheckIndexKinds(kinds []string) ([]string, error) {
+	checked := make([]string, 0, len(kinds))
+	for _, kind := range kinds {
+		kind = strings.TrimSpace(kind)
+		if _, known := DefaultIndex()[kind]; !known {
+			return nil, fmt.Errorf("unknown kind of index %q (known: %s, %s)", kind, IndexGraph, IndexEmbeddings)
+		}
+		checked = append(checked, kind)
+	}
+	return checked, nil
+}
+
 // IndexResolver tells which kinds of index are on for a file: the defaults,
 // as changed by the profile, as changed by the nearest .config.yaml above
 // the file.

@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/wouteroostervld/chainsaw/pkg/config"
 	"github.com/wouteroostervld/chainsaw/pkg/db"
 	"github.com/wouteroostervld/chainsaw/pkg/filter"
+	"github.com/wouteroostervld/chainsaw/pkg/indexer"
 	"github.com/wouteroostervld/chainsaw/pkg/watcher"
 	"github.com/wouteroostervld/chainsaw/pkg/worker"
 )
@@ -46,7 +49,7 @@ func printDaemonUsage() {
 	fmt.Println("chainsaw daemon - Background indexing daemon")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  chainsaw daemon start [-debug] [-loglevel level]")
+	fmt.Println("  chainsaw daemon start [-debug] [-loglevel level] [-scan=false] [-scan-kinds kinds]")
 	fmt.Println("                        Start the daemon")
 	fmt.Println("  chainsaw daemon status")
 	fmt.Println("                        Show daemon status")
@@ -54,6 +57,12 @@ func printDaemonUsage() {
 	fmt.Println("Flags for 'start' command:")
 	fmt.Println("  -debug          Enable debug logging")
 	fmt.Println("  -loglevel LEVEL Set log level: debug, info, warn, error (default: info)")
+	fmt.Println("  -scan=false     Do not bring the index up to date with the watched")
+	fmt.Println("                  directories at startup; only index what changes from now on")
+	fmt.Println("  -scan-kinds K   The kinds of index the startup scan fills, comma-separated")
+	fmt.Println("                  (graph, embeddings; default: graph)")
+	fmt.Println()
+	fmt.Println("The scan flags override daemon.scan and daemon.scan_kinds of the configuration.")
 }
 
 func handleDaemonStart() {
@@ -61,30 +70,26 @@ func handleDaemonStart() {
 	debug := startFlags.Bool("debug", false, "Enable debug logging")
 	logLevelStr := startFlags.String("loglevel", "info", "Log level (debug, info, warn, error)")
 
+	scan := startFlags.Bool("scan", true, "Bring the index up to date at startup")
+	scanKinds := startFlags.String("scan-kinds", "", "Kinds of index the startup scan fills")
+
 	startFlags.Parse(os.Args[3:])
 
-	logLevel := new(slog.LevelVar)
-	logLevel.Set(slog.LevelError)
-	if *debug {
-		logLevel.Set(slog.LevelDebug)
-	} else {
-		logLevel.Set(slog.LevelError)
-		if logLevelStr != nil {
-			switch {
-			case *logLevelStr == "debug":
-				logLevel.Set(slog.LevelDebug)
-			case *logLevelStr == "info":
-				logLevel.Set(slog.LevelInfo)
-			case *logLevelStr == "warn" || *logLevelStr == "warning":
-				logLevel.Set(slog.LevelWarn)
-			}
-		}
+	level := slog.LevelInfo
+	switch {
+	case *debug:
+		level = slog.LevelDebug
+	case *logLevelStr == "debug":
+		level = slog.LevelDebug
+	case *logLevelStr == "warn" || *logLevelStr == "warning":
+		level = slog.LevelWarn
+	case *logLevelStr == "error":
+		level = slog.LevelError
+	case *logLevelStr != "info":
+		fmt.Fprintf(os.Stderr, "Unknown log level: %s (known: debug, info, warn, error)\n", *logLevelStr)
+		os.Exit(1)
 	}
-
-	opts := &slog.HandlerOptions{Level: logLevel}
-	handler := slog.NewTextHandler(os.Stderr, opts)
-	slog.SetDefault(slog.New(handler))
-	fmt.Println("🚀 Starting Chainsaw daemon...")
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 
 	dbPath := db.DefaultPath()
 	database, err := db.Open(db.Config{Path: dbPath})
@@ -94,17 +99,14 @@ func handleDaemonStart() {
 	}
 	defer database.Close()
 
-	fmt.Printf("✓ Database ready at %s\n", dbPath)
-
 	configPath := filepath.Join(os.Getenv("HOME"), ".chainsaw", "config.yaml")
 	fs := &config.RealFileSystem{}
 	globalCfg, err := config.LoadGlobalConfigFromPath(configPath, fs)
 	if err != nil {
-		slog.Warn("Config not found, using defaults", "error", err)
+		slog.Warn("Configuration not loaded, using defaults", "config", configPath, "error", err)
 		globalCfg = createDefaultDaemonConfig()
-	} else {
-		fmt.Printf("✓ Config loaded from %s\n", configPath)
 	}
+	slog.Info("Daemon starting", "database", dbPath, "config", configPath)
 
 	// Every kind of index that is switched on for a file is kept for it
 	st, err := loadSettings()
@@ -118,7 +120,32 @@ func handleDaemonStart() {
 		os.Exit(1)
 	}
 	if err := idx.Ready([]string{config.IndexEmbeddings}); err != nil {
-		slog.Info("Not making embeddings: no model is configured")
+		slog.Info("Not making embeddings, no model is configured")
+	}
+
+	// What to scan for at startup: the configuration, unless a flag says otherwise
+	scanFor, err := st.profile.DaemonScan()
+	if err != nil {
+		slog.Error("Configuration cannot be used", "setting", "daemon.scan_kinds", "error", err)
+		os.Exit(1)
+	}
+	startFlags.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "scan":
+			if !*scan {
+				scanFor = nil
+			} else if scanFor == nil {
+				scanFor = []string{config.IndexGraph}
+			}
+		case "scan-kinds":
+			if scanFor, err = config.CheckIndexKinds(strings.Split(*scanKinds, ",")); err != nil {
+				slog.Error("Flag cannot be used", "flag", "-scan-kinds", "error", err)
+				os.Exit(1)
+			}
+		}
+	})
+	if !*scan {
+		scanFor = nil
 	}
 
 	indexWorker := worker.NewIndexWorker(&worker.Config{
@@ -160,13 +187,13 @@ func handleDaemonStart() {
 
 			content, err := os.ReadFile(path)
 			if err != nil {
-				slog.Debug("Failed to read file for queueing", "path", path, "error", err)
+				slog.Debug("Failed to read file for queueing", "file", path, "error", err)
 				return
 			}
 
 			info, err := os.Stat(path)
 			if err != nil {
-				slog.Debug("Failed to stat file for queueing", "path", path, "error", err)
+				slog.Debug("Failed to stat file for queueing", "file", path, "error", err)
 				return
 			}
 
@@ -174,10 +201,10 @@ func handleDaemonStart() {
 			modTime := info.ModTime().UnixNano()
 
 			if err := database.MarkFilePending(path, modTime, hash); err != nil {
-				slog.Error("Failed to queue file", "path", path, "error", err)
+				slog.Error("Failed to queue file", "file", path, "error", err)
 				return
 			}
-			slog.Debug("Queued file for indexing", "path", path)
+			slog.Debug("Queued file for indexing", "file", path)
 		},
 	})
 	if err != nil {
@@ -186,18 +213,22 @@ func handleDaemonStart() {
 	}
 	defer fw.Close()
 
-	watchedCount := 0
+	watchedCount, excludedCount, unwatchedCount := 0, 0, 0
+	var roots []string // The included directories that are there
 	if globalCfg != nil && len(globalCfg.Profiles) > 0 && globalCfg.ActiveProfile != "" {
 		if profile, ok := globalCfg.Profiles[globalCfg.ActiveProfile]; ok && profile != nil {
 			for _, includePath := range profile.Include {
-				absPath, err := filepath.Abs(includePath)
+				absPath, err := config.NormalizePath(includePath)
 				if err != nil {
-					slog.Warn("Skipping invalid path", "path", includePath, "error", err)
+					slog.Warn("Skipping invalid include path", "dir", includePath, "error", err)
 					continue
+				}
+				if info, err := os.Stat(absPath); err == nil && info.IsDir() {
+					roots = append(roots, absPath)
 				}
 				err = filepath.WalkDir(absPath, func(path string, d os.DirEntry, err error) error {
 					if err != nil {
-						slog.Warn("Could not stat", "path", path, "error", err)
+						slog.Warn("Failed to read directory", "dir", path, "error", err)
 						return err
 					}
 					if d.IsDir() {
@@ -207,15 +238,17 @@ func handleDaemonStart() {
 								excludePath = filepath.Join(currentBase, excludePath)
 							}
 							if path == excludePath {
-								slog.Info("Excluding directory", "path", excludePath)
+								excludedCount++
+								slog.Debug("Excluding directory", "dir", excludePath)
 								return filepath.SkipDir
 							}
 						}
 						if err := fw.Watch(path); err != nil {
-							slog.Warn("Failed to watch directory", "path", path, "error", err)
+							unwatchedCount++
+							slog.Warn("Failed to watch directory", "dir", path, "error", err)
 						} else {
 							watchedCount++
-							slog.Info("👁️  Watching:", "path", path)
+							slog.Debug("Watching directory", "dir", path)
 						}
 					}
 					return err
@@ -225,7 +258,9 @@ func handleDaemonStart() {
 	}
 
 	if watchedCount == 0 {
-		slog.Warn("⚠️  No directories being watched. Update config.yaml with include paths.")
+		slog.Warn("No directories are watched, name them under include in the configuration", "config", configPath)
+	} else {
+		slog.Info("Watching directories", "include", roots, "watched", watchedCount, "excluded", excludedCount, "failed", unwatchedCount)
 	}
 
 	sigChan := make(chan os.Signal, 1)
@@ -240,47 +275,83 @@ func handleDaemonStart() {
 		}
 	}()
 
+	// Watching only shows what changes from now on. What changed while the
+	// daemon was away is found by looking, once the watches are set so that
+	// nothing falls between the two.
+	scanCtx, scanCancel := context.WithCancel(context.Background())
+	defer scanCancel()
+	scanDone := make(chan struct{})
+	go func() {
+		defer close(scanDone)
+		if len(scanFor) > 0 && len(roots) > 0 {
+			startupScan(scanCtx, database, st, roots, scanFor)
+		}
+	}()
+
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	fmt.Println()
-	fmt.Println("✅ Daemon running. Press Ctrl+C to stop.")
-	fmt.Println()
+	slog.Info("Daemon running")
+
+	var lastStatus string // To say it again only when it is news
 
 	for {
 		select {
 		case <-sigChan:
-			fmt.Println("\n🛑 Shutting down gracefully...")
+			slog.Info("Daemon stopping")
 			watchCancel()
+			scanCancel()
+			<-scanDone
+			slog.Info("Daemon stopped")
 			return
 
 		case <-ticker.C:
 			counts, err := database.Count()
 			if err != nil {
-				slog.Error("Failed to count", "error", err)
+				slog.Error("Failed to count what is indexed", "error", err)
 				continue
 			}
 			var edgeCount int64
 			for _, n := range counts.Edges {
 				edgeCount += n
 			}
-			fileCount := counts.Files
-			statusCounts, _ := database.CountFilesByStatus()
-
-			indexed := statusCounts["indexed"]
-			pending := statusCounts["pending"]
-			processing := statusCounts["processing"]
-			failed := statusCounts["failed"]
-
-			fmt.Printf("📊 Status: %d files (%d indexed, %d pending", fileCount, indexed, pending)
-			if processing > 0 {
-				fmt.Printf(", %d processing", processing)
+			byStatus, _ := database.CountFilesByStatus()
+			status := []any{
+				"files", counts.Files, "indexed", byStatus["indexed"], "pending", byStatus["pending"],
+				"processing", byStatus["processing"], "failed", byStatus["failed"],
+				"definitions", counts.Definitions, "edges", edgeCount,
 			}
-			if failed > 0 {
-				fmt.Printf(", %d failed", failed)
+			// An idle daemon has nothing new to say
+			level := slog.LevelDebug
+			if now := fmt.Sprint(status...); now != lastStatus {
+				level, lastStatus = slog.LevelInfo, now
 			}
-			fmt.Printf("), %d definitions, %d edges\n", counts.Definitions, edgeCount)
+			slog.Log(context.Background(), level, "Index status", status...)
 		}
+	}
+}
+
+// startupScan brings the index up to date with the included directories, as
+// "chainsaw index" would: new and modified files are indexed and the index
+// forgets files that are gone. It works beside the watcher and stops between
+// two files when the daemon does.
+func startupScan(ctx context.Context, database *db.DB, st *settings, roots []string, kinds []string) {
+	slog.Info("Startup scan started", "kinds", kinds, "dirs", roots)
+	start := time.Now()
+	stats, err := syncIndex(database, st, roots, syncOptions{ctx: ctx, only: kinds, log: slog.Default()})
+	result := []any{
+		"took", time.Since(start).Round(time.Millisecond), "indexed", stats.indexed, "unchanged", stats.unchanged,
+		"removed", stats.removed, "failed", stats.failed,
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		slog.Info("Startup scan stopped", append(result, "to_go", stats.pending)...)
+	case errors.Is(err, indexer.ErrNoEmbedder):
+		slog.Warn("Startup scan made no embeddings, no model is configured")
+	case err != nil:
+		slog.Error("Startup scan failed", append(result, "error", err)...)
+	default:
+		slog.Info("Startup scan done", result...)
 	}
 }
 
@@ -324,7 +395,7 @@ func createDaemonFileFilter(cfg *config.GlobalConfig) func(string) bool {
 
 		fileOk, _ := filter.ShouldIndexFile(path, profile.Blacklist, profile.Whitelist)
 		if !fileOk {
-			slog.Debug("Filtered out file", "path", path, "reason", "blacklist matched")
+			slog.Debug("Filtered out file", "file", path, "reason", "blacklist matched")
 		}
 		return fileOk
 	}
