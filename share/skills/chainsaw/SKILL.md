@@ -16,7 +16,8 @@ read-only, plus a fourth that only works where it is switched on:
 | `chainsaw search <words>` | Where is the code that does this, when I have no name for it? | Yes, and off by default |
 
 Run them from inside the project. Parsed languages: Go, Python, JavaScript,
-TypeScript, Rust, Java, C, C++, Ruby.
+TypeScript, Rust, Java, C, C++, Ruby, Motorola 68000 assembly (a global label
+and the lines under it are one definition).
 
 If `chainsaw` is not on the PATH, say so and work with plain grep; do not
 install it yourself. It is built from

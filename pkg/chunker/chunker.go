@@ -153,6 +153,9 @@ func Parse(path string, src []byte, maxChunkSize int) (*File, bool) {
 	defer tree.Close()
 
 	root := tree.RootNode()
+	if spec.label != nil && !parsesWell(root) {
+		return nil, false
+	}
 	b.collectImports(root)
 
 	rootFold := &fold{node: root, start: 0, end: uint(len(src)), startRow: 0, endRow: root.EndPosition().Row}
@@ -164,6 +167,22 @@ func Parse(path string, src []byte, maxChunkSize int) (*File, bool) {
 	}
 
 	return b.file, true
+}
+
+// parsesWell reports whether a file is in the language its extension stands
+// for. Assembly for every processor is kept in .s and .asm files, and the
+// labels and comments of another assembler parse well enough to yield
+// definitions that are not there. Source in the right syntax has next to no
+// errors; anything else has them in more than one line out of ten.
+func parsesWell(root *sitter.Node) bool {
+	total := root.NamedChildCount()
+	errors := uint(0)
+	for i := uint(0); i < total; i++ {
+		if c := root.NamedChild(i); c.IsError() || c.HasError() {
+			errors++
+		}
+	}
+	return errors*10 <= total
 }
 
 // fold is a source range that is replaced by a stub in its parent chunk
@@ -259,17 +278,66 @@ func (b *builder) addRef(r Ref) {
 func (b *builder) walk(n *sitter.Node, sc scope) {
 	kind := n.Kind()
 	if dk, ok := b.spec.defs[kind]; ok {
-		sc = b.define(n, dk, sc)
+		sc = b.define(n, n, dk, sc)
 	} else if field, ok := b.spec.calls[kind]; ok {
 		b.call(n, field, sc)
+	} else if b.spec.target != nil {
+		if name := b.spec.target(b, n, sc); name != "" {
+			b.addRef(Ref{Source: sc.sym, Relation: RelationCalls, Name: name, External: name})
+		}
+	}
+	if b.spec.label != nil {
+		b.walkLabels(n, sc)
+		return
 	}
 	for i := uint(0); i < n.NamedChildCount(); i++ {
 		b.walk(n.NamedChild(i), sc)
 	}
 }
 
-// define handles a definition node and returns the scope for its children
-func (b *builder) define(n *sitter.Node, dk defKind, sc scope) scope {
+// walkLabels visits the children of a node in a language where a definition
+// is a label and the lines after it, up to the next label: assembly. Labels
+// that only mark a place inside a definition do not end it.
+func (b *builder) walkLabels(n *sitter.Node, sc scope) {
+	children := make([]*sitter.Node, n.NamedChildCount())
+	for i := range children {
+		children[i] = n.NamedChild(uint(i))
+	}
+
+	inner := sc
+	for i, c := range children {
+		if b.spec.label(b, c) {
+			end := i + 1
+			for end < len(children) && !b.spec.label(b, children[end]) {
+				end++
+			}
+			// Comments above the next label are about that label
+			for end > i+1 && b.leads(children[end-1]) {
+				if start, _ := b.ownStart(children[end-1]); !b.startsLineAt(start) {
+					break
+				}
+				end--
+			}
+
+			dk := function
+			for _, next := range children[i+1 : end] {
+				if kind := next.Kind(); !b.leads(next) && !b.spec.labelKinds[kind] {
+					if b.spec.dataKinds[kind] {
+						dk = defKind{etype: TypeStruct}
+					}
+					break
+				}
+			}
+			inner = b.define(c, children[end-1], dk, sc)
+		}
+		b.walk(c, inner)
+	}
+}
+
+// define handles a definition node and returns the scope for its children.
+// last is the node the definition ends with: n itself, or a later sibling
+// when the definition is a label and what follows it.
+func (b *builder) define(n, last *sitter.Node, dk defKind, sc scope) scope {
 	d := def{etype: dk.etype, name: b.text(n.ChildByFieldName("name"))}
 	if b.spec.describe != nil && !b.spec.describe(b, n, &d) {
 		return sc
@@ -279,6 +347,11 @@ func (b *builder) define(n *sitter.Node, dk defKind, sc scope) scope {
 	}
 
 	f := b.newFold(n)
+	endRow := n.EndPosition().Row
+	if last != n {
+		f.end, f.endRow = b.ownEnd(last)
+		endRow = f.endRow
+	}
 
 	inner := sc
 	if d.etype != "" {
@@ -311,7 +384,7 @@ func (b *builder) define(n *sitter.Node, dk defKind, sc scope) scope {
 		inner.selfName = d.selfName
 	}
 
-	if n.EndPosition().Row-n.StartPosition().Row+1 >= minFoldLines {
+	if endRow-n.StartPosition().Row+1 >= minFoldLines {
 		f.title = d.name
 		if d.container != "" {
 			f.title = d.container + "." + d.name
@@ -334,23 +407,24 @@ func (b *builder) newFold(n *sitter.Node) *fold {
 		outer = p
 	}
 
-	first := outer
-	for prev := first.PrevNamedSibling(); prev != nil && b.spec.leading[prev.Kind()]; prev = first.PrevNamedSibling() {
+	first, start, startRow := outer, outer.StartByte(), outer.StartPosition().Row
+	for prev := first.PrevNamedSibling(); prev != nil && b.leads(prev); prev = first.PrevNamedSibling() {
 		// Some grammars include the line break in a comment node
 		end := prev.EndPosition()
 		if end.Column > 0 {
 			end.Row++
 		}
-		if end.Row != first.StartPosition().Row || !b.startsLine(prev) {
+		prevStart, prevRow := b.ownStart(prev)
+		if end.Row != startRow || !b.startsLineAt(prevStart) {
 			break
 		}
-		first = prev
+		first, start, startRow = prev, prevStart, prevRow
 	}
 
-	start := first.StartByte()
-	if b.startsLine(first) {
+	if b.startsLineAt(start) {
 		start = b.lineStart(start)
 	}
+	end, endRow := b.ownEnd(outer)
 
 	sigStart := outer.StartByte()
 	var header string
@@ -373,12 +447,18 @@ func (b *builder) newFold(n *sitter.Node) *fold {
 	return &fold{
 		node:     n,
 		start:    start,
-		end:      outer.EndByte(),
-		startRow: first.StartPosition().Row,
-		endRow:   outer.EndPosition().Row,
+		end:      end,
+		startRow: startRow,
+		endRow:   endRow,
 		indent:   string(b.src[b.lineStart(sigStart):sigStart]),
 		header:   header,
 	}
+}
+
+// leads reports whether a node above a definition belongs to it, when
+// nothing but more of the same is in between
+func (b *builder) leads(n *sitter.Node) bool {
+	return b.spec.leading[n.Kind()] || (b.spec.remark != nil && b.spec.remark(b, n))
 }
 
 func (b *builder) lineStart(offset uint) uint {
@@ -390,8 +470,44 @@ func (b *builder) lineStart(offset uint) uint {
 
 // startsLine reports whether only whitespace precedes the node on its line
 func (b *builder) startsLine(n *sitter.Node) bool {
-	start := n.StartByte()
-	return strings.TrimSpace(string(b.src[b.lineStart(start):start])) == ""
+	return b.startsLineAt(n.StartByte())
+}
+
+func (b *builder) startsLineAt(offset uint) bool {
+	return strings.TrimSpace(string(b.src[b.lineStart(offset):offset])) == ""
+}
+
+// ownStart returns where the text of a node starts. The m68k grammar lets a
+// comment on a line of its own begin at the end of the line before it, with
+// the line breaks in between as part of the comment.
+func (b *builder) ownStart(n *sitter.Node) (offset, row uint) {
+	offset, row = n.StartByte(), n.StartPosition().Row
+	if offset >= n.EndByte() || (b.src[offset] != '\n' && b.src[offset] != '\r') {
+		return offset, row
+	}
+	for ; offset < n.EndByte(); offset++ {
+		switch b.src[offset] {
+		case '\n':
+			row++
+		case '\r', ' ', '\t':
+		default:
+			return offset, row
+		}
+	}
+	return offset, row
+}
+
+// ownEnd returns where a node ends, leaving out a comment on a later line
+// that the grammar made its last child
+func (b *builder) ownEnd(n *sitter.Node) (offset, row uint) {
+	if count := n.NamedChildCount(); count > 0 {
+		if c := n.NamedChild(count - 1); b.leads(c) && c.EndByte() == n.EndByte() {
+			if start, _ := b.ownStart(c); start != c.StartByte() {
+				return c.StartByte(), c.StartPosition().Row
+			}
+		}
+	}
+	return n.EndByte(), n.EndPosition().Row
 }
 
 // findBody returns the body of a definition, looking through wrapping nodes
