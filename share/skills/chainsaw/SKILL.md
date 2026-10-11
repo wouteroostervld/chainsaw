@@ -28,6 +28,7 @@ install it yourself. It is built from
 chainsaw grep 'IS_EXT2_SB' fs/ext4        # matches grouped by enclosing definition
 chainsaw grep -s 'ctx\.Done\(\)'          # only the list of definitions, with counts
 chainsaw grep -i -w 'timeout' pkg         # -i ignore case, -w whole words, -F literal
+chainsaw grep -s --limit 40 'err' pkg     # the first 40, and how many there are in all
 ```
 
 ```
@@ -43,12 +44,17 @@ exhaustive and always current, so **use `grep -s` to enumerate every place
 before a change that must be complete** (renaming, removing a feature). The
 line ranges tell you what to read.
 
+When there may be much, pass `--limit N` rather than piping into `head`: the
+last line still gives the total, so you know what you have not seen.
+
 ## outline: a file folded to its signatures
 
 ```bash
 chainsaw outline pkg/indexer/indexer.go
 chainsaw outline --expand Indexer.IndexFile pkg/indexer/indexer.go   # one definition in full
+chainsaw outline --body Indexer.IndexFile pkg/indexer/indexer.go     # that definition and nothing else
 chainsaw outline --symbols pkg/indexer/indexer.go                    # type, name, lines, signature
+chainsaw outline pkg/db/files.go pkg/db/chunks.go                    # several files, each under its name
 ```
 
 ```go
@@ -59,7 +65,9 @@ func (idx *Indexer) IndexFile(ctx context.Context, filePath string) error // ...
 A folded line gives the signature and the lines of the body. Read those lines
 of the file when you need the body. **Outline a large file before reading
 it.** `--expand` takes a qualified name (`Type.method`), a bare name or a
-line number, and may be given more than once.
+line number, and may be given more than once. To read one definition, use
+`--body NAME` and not `--expand NAME | sed`: it prints the definition alone,
+with its file and lines.
 
 ## query: the call graph
 
@@ -121,6 +129,24 @@ chainsaw query --expand body 'MATCH (f)-[:calls]->(t {name: "nearest"}) RETURN f
 | `--expand body` | The whole definition around each result. Smallest; start here. |
 | `--expand file` | The file folded to signatures, with those definitions in full. |
 | `--expand calls` | As `file`, plus what those definitions call. For following code. |
+
+## Shaping the output
+
+These replace the pipes you would otherwise write; options may stand before
+or after the pattern, query or file.
+
+| Instead of | Use |
+|---|---|
+| `chainsaw grep ... \| head -40` | `--limit 40`: the total is still given |
+| `... \| cut -c1-160` | `--width 160`, on `grep`, `outline`, `query` and `search` |
+| `outline --expand X f \| sed -n '/X/,/^}/p'` | `outline --body X f` |
+| `query ... \| grep name \| sed ...` | `query --oneline`: one row a line, values separated by tabs |
+| `search ... \| grep File` | `search --oneline`: `path:lines`, distance, name |
+| `for f in ...; do chainsaw outline $f; done` | `chainsaw outline a.go b.go` |
+
+`grep --oneline` writes `path:line: [definition] text`, and with `-s`
+`path:start-end: [definition] count`: one match a line, for `sort`, `wc -l`
+or a further filter.
 
 ## Which to use
 
