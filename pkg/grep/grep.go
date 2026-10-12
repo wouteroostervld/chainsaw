@@ -29,6 +29,7 @@ type Options struct {
 	Fixed      bool     // The pattern is a literal string, not a regular expression
 	Word       bool     // The pattern must match whole words
 	Exclude    []string // Names of directories to skip, besides hidden ones
+	Signature  bool     // Only matches in the signature of a definition count: in it, before its body
 }
 
 // Line is a line that matched
@@ -71,25 +72,62 @@ func Search(pattern string, paths []string, opts Options) ([]File, error) {
 	}
 	defer re.Close()
 
-	exclude := make(map[string]bool, len(opts.Exclude))
-	for _, name := range opts.Exclude {
-		exclude[strings.TrimSuffix(name, "/")] = true
-	}
-
 	// Matching is quick and done in order, with the one compiled pattern.
 	// Finding the definitions around the matches means parsing each file
 	// that has any, which is the slow part and is done in parallel.
 	var found []*candidate
-	search := func(path string) {
+	err = walk(paths, opts.Exclude, func(path string) {
 		if c := matchFile(re, path); c != nil {
 			found = append(found, c)
 		}
+	})
+	if err != nil {
+		return nil, err
 	}
+	return each(found, func(c *candidate) File { return c.group(opts.Signature) }), nil
+}
 
+// Match looks in the given files and directories for what a tree-sitter
+// query captures: patterns over the syntax tree, where Search has a pattern
+// over the text. Only files in a language the query fits are searched.
+func Match(query *chunker.Query, paths []string, opts Options) ([]File, error) {
+	var fits []string
+	err := walk(paths, opts.Exclude, func(path string) {
+		if query.Fits(path) {
+			fits = append(fits, path)
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return each(fits, func(path string) File {
+		content := readText(path)
+		if content == nil {
+			return File{}
+		}
+		captures := query.Find(path, content)
+		if len(captures) == 0 {
+			return File{}
+		}
+		c := &candidate{path: path, content: content}
+		for _, capture := range captures {
+			c.offsets = append(c.offsets, capture.Start)
+		}
+		return c.group(opts.Signature)
+	}), nil
+}
+
+// walk calls search for the files named, and for the regular files under
+// the directories named. Hidden and excluded directories are skipped.
+func walk(paths, excluded []string, search func(path string)) error {
+	exclude := make(map[string]bool, len(excluded))
+	for _, name := range excluded {
+		exclude[strings.TrimSuffix(name, "/")] = true
+	}
 	for _, root := range paths {
 		info, err := os.Stat(root)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if !info.IsDir() {
 			// A file named on the command line is searched whatever it is
@@ -113,11 +151,16 @@ func Search(pattern string, paths []string, opts Options) ([]File, error) {
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
+	return nil
+}
 
-	files := make([]File, len(found))
+// each turns every item into the matches of a file, in parallel, and returns
+// those that have any, in the order of the items
+func each[T any](items []T, group func(T) File) []File {
+	files := make([]File, len(items))
 	var wg sync.WaitGroup
 	next := make(chan int)
 	for w := 0; w < runtime.NumCPU(); w++ {
@@ -125,34 +168,51 @@ func Search(pattern string, paths []string, opts Options) ([]File, error) {
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				files[i] = found[i].group()
+				files[i] = group(items[i])
 			}
 		}()
 	}
-	for i := range found {
+	for i := range items {
 		next <- i
 	}
 	close(next)
 	wg.Wait()
-	return files, nil
+
+	matched := files[:0]
+	for _, f := range files {
+		if len(f.Groups) > 0 {
+			matched = append(matched, f)
+		}
+	}
+	return matched
 }
 
 // candidate is a file with matches, before its definitions are known
 type candidate struct {
 	path    string
 	content []byte
-	numbers []int // The lines with a match, in order
+	offsets []int // Where the matches start, in order
 }
 
-// matchFile returns the lines of a file that match; nil when there are none
-// or the file is not text
-func matchFile(re *pcre.Regexp, path string) *candidate {
+// readText returns the content of a file; nil when it is empty, too large or
+// not text
+func readText(path string) []byte {
 	info, err := os.Stat(path)
 	if err != nil || info.Size() > maxFileSize || info.Size() == 0 {
 		return nil
 	}
 	content, err := os.ReadFile(path)
 	if err != nil || bytes.IndexByte(content[:min(len(content), 8000)], 0) >= 0 {
+		return nil
+	}
+	return content
+}
+
+// matchFile returns the matches in a file; nil when there are none or the
+// file is not text
+func matchFile(re *pcre.Regexp, path string) *candidate {
+	content := readText(path)
+	if content == nil {
 		return nil
 	}
 
@@ -163,28 +223,36 @@ func matchFile(re *pcre.Regexp, path string) *candidate {
 		return nil
 	}
 
-	// The lines the matches start on
-	var numbers []int
-	line, offset := 1, 0
+	c := &candidate{path: path, content: content}
 	for _, m := range matches {
-		line += bytes.Count(content[offset:m[0]], []byte{'\n'})
-		offset = m[0]
+		c.offsets = append(c.offsets, m[0])
+	}
+	return c
+}
+
+// group parses the file and groups the lines its matches start on by the
+// definition around them. With signature set, only the matches in the
+// signature of a definition are kept.
+func (c *candidate) group(signature bool) File {
+	lines := bytes.Split(c.content, []byte{'\n'})
+	parsed, _ := chunker.Parse(c.path, c.content, 0)
+
+	var numbers []int
+	line, last := 1, 0
+	for _, offset := range c.offsets {
+		if signature && (parsed == nil || !parsed.InSignature(offset)) {
+			continue
+		}
+		line += bytes.Count(c.content[last:offset], []byte{'\n'})
+		last = offset
 		if len(numbers) == 0 || numbers[len(numbers)-1] != line {
 			numbers = append(numbers, line)
 		}
 	}
-	return &candidate{path: path, content: content, numbers: numbers}
-}
-
-// group parses the file and groups its matching lines by the definition
-// around them
-func (c *candidate) group() File {
-	lines := bytes.Split(c.content, []byte{'\n'})
-	parsed, _ := chunker.Parse(c.path, c.content, 0)
 
 	file := File{Path: c.path}
 	groups := make(map[int]int) // Symbol index -> index into file.Groups
-	for _, n := range c.numbers {
+	for _, n := range numbers {
 		symbol := -1
 		if parsed != nil {
 			symbol = parsed.SymbolAt(n)

@@ -73,6 +73,8 @@ type Symbol struct {
 	Parent    int    // Index of the enclosing symbol, -1 at file level
 	Chunk     int    // Index of the chunk holding the definition
 	Signature string // The definition up to its body, e.g. "func (idx *Indexer) IndexFile(path string) error"
+	SigStart  int    // Byte range of the signature in the file
+	SigEnd    int    // Exclusive
 	StartLine int    // 1-indexed, including the doc comment above the definition
 	EndLine   int    // 1-indexed, inclusive
 }
@@ -141,21 +143,13 @@ func Parse(path string, src []byte, maxChunkSize int) (*File, bool) {
 		return b.file, true
 	}
 
-	parser := sitter.NewParser()
-	defer parser.Close()
-	if err := parser.SetLanguage(spec.language()); err != nil {
-		return nil, false
-	}
-	tree := parser.Parse(src, nil)
+	tree := spec.parse(src)
 	if tree == nil {
 		return nil, false
 	}
 	defer tree.Close()
 
 	root := tree.RootNode()
-	if spec.label != nil && !parsesWell(root) {
-		return nil, false
-	}
 	b.collectImports(root)
 
 	rootFold := &fold{node: root, start: 0, end: uint(len(src)), startRow: 0, endRow: root.EndPosition().Row}
@@ -167,6 +161,25 @@ func Parse(path string, src []byte, maxChunkSize int) (*File, bool) {
 	}
 
 	return b.file, true
+}
+
+// parse returns the syntax tree of a file, which the caller closes; nil when
+// the file is not in the language
+func (s *langSpec) parse(src []byte) *sitter.Tree {
+	parser := sitter.NewParser()
+	defer parser.Close()
+	if err := parser.SetLanguage(s.language()); err != nil {
+		return nil
+	}
+	tree := parser.Parse(src, nil)
+	if tree == nil {
+		return nil
+	}
+	if s.label != nil && !parsesWell(tree.RootNode()) {
+		tree.Close()
+		return nil
+	}
+	return tree
 }
 
 // parsesWell reports whether a file is in the language its extension stands
@@ -193,6 +206,7 @@ type fold struct {
 	startRow, endRow uint
 	indent           string
 	header           string // Signature shown in the parent chunk
+	sigStart         uint   // Byte offset the signature starts at
 	children         []*fold
 	chunk            int
 }
@@ -367,6 +381,8 @@ func (b *builder) define(n, last *sitter.Node, dk defKind, sc scope) scope {
 			Type:      d.etype,
 			Parent:    sc.sym,
 			Signature: strings.Join(strings.Fields(f.header), " "),
+			SigStart:  int(f.sigStart),
+			SigEnd:    int(f.sigStart) + len(f.header),
 			StartLine: int(f.startRow) + 1,
 			EndLine:   int(f.endRow) + 1,
 		})
@@ -452,6 +468,7 @@ func (b *builder) newFold(n *sitter.Node) *fold {
 		endRow:   endRow,
 		indent:   string(b.src[b.lineStart(sigStart):sigStart]),
 		header:   header,
+		sigStart: sigStart,
 	}
 }
 
@@ -809,6 +826,17 @@ func (f *File) ChunkAt(line int) int {
 		}
 	}
 	return best
+}
+
+// InSignature reports whether a byte offset lies in the signature of a
+// definition: in the definition, before its body
+func (f *File) InSignature(offset int) bool {
+	for _, s := range f.Symbols {
+		if offset >= s.SigStart && offset < s.SigEnd {
+			return true
+		}
+	}
+	return false
 }
 
 // SymbolAt returns the innermost symbol that holds a line (1-indexed), or -1

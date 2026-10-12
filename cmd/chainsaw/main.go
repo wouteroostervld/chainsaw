@@ -19,6 +19,7 @@ const usage = `Usage: chainsaw <command>
 
 Looking at code:
   grep <pattern> [path...]   Search with a regular expression; shows the definition around each match
+  match <query> [path...]    Search the syntax tree with a tree-sitter query, in signatures or anywhere
   outline <file>             Show a file folded to its signatures
   query <cypher>             Query the code graph: definitions, calls, imports
   search <words>             Search by meaning (needs the embeddings index, which is off by default)
@@ -39,6 +40,8 @@ func main() {
 	switch os.Args[1] {
 	case "grep":
 		handleGrep(os.Args[2:])
+	case "match":
+		handleMatch(os.Args[2:])
 	case "outline":
 		handleOutline(os.Args[2:])
 	case "query":

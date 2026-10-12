@@ -24,6 +24,9 @@ older version is built again, or has to be removed.
 # Search with a regular expression (PCRE); each match shows the definition it is in
 chainsaw grep 'IS_EXT2_SB' fs/ext4
 
+# Search the syntax tree with a tree-sitter query; here, only in signatures
+chainsaw match --signature '((identifier) @p (#eq? @p "ctx"))'
+
 # A file folded to its signatures, each with the lines of its body
 chainsaw outline pkg/indexer/indexer.go
 
@@ -34,7 +37,8 @@ chainsaw query 'MATCH (f)-[:calls]->(t {name: "Open"}) RETURN f.name, f.file, f.
 chainsaw search "where are retries handled"
 ```
 
-`grep` and `outline` work on the files as they are on disk and need no index.
+`grep`, `match` and `outline` work on the files as they are on disk and need
+no index.
 `query` keeps its own: before it runs, whatever is new or changed under the
 current directory is indexed, so there is nothing to set up and results are
 never stale. For a very large tree, index it once by hand:
@@ -163,7 +167,7 @@ source files ── tree-sitter ─┬► definitions, calls, imports ──► 
       │       (+ go/types    │
       │         for Go)      └► chunks ── model ──► embeddings (optional) ──► chainsaw search
       │
-      └─────────────────────────────────────────────────────────────────────► chainsaw grep / outline
+      └─────────────────────────────────────────────────────────────────────► chainsaw grep / match / outline
 ```
 
 The index lives in `~/.chainsaw/graph.db`. It holds names, locations, edges
