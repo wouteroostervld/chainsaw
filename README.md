@@ -139,7 +139,8 @@ another processor in a file with one of these extensions is left alone.
 
 In BCPL (`.b`, `.bcpl`) a definition is a function or a routine, whether it is
 introduced by `LET` or by `AND`, and a `GET` is an import. Reserved words are
-upper case. Headers named `.h` are read as C++.
+upper case. Square brackets are parentheses, as in the TRIPOS compiler
+(`s%[i+1]`); only `v[i]` is a subscript. Headers named `.h` are read as C++.
 
 ## Installation
 

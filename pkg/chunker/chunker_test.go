@@ -425,6 +425,33 @@ $)
 	}
 }
 
+// The TRIPOS compiler reads [ and ] as ( and ), so they are no syntax error:
+// what follows them is still found.
+func TestParse_BCPLSquareBrackets(t *testing.T) {
+	f := parse(t, "/proj/split.b", `LET copy[prefix, string] BE
+$( FOR i = 1 TO string%0 DO prefix%[i+1] := string%[i]
+   [@first]![i+1] := get2bytes[string, i]
+   done(prefix)
+$)
+
+AND last(v) = v[0]
+`)
+
+	idx, sym := findSymbol(t, f, "copy")
+	if sym.StartLine != 1 || sym.EndLine != 5 || sym.Signature != "LET copy[prefix, string] BE" {
+		t.Errorf("copy = %+v", sym)
+	}
+	for _, name := range []string{"get2bytes", "done"} {
+		want := Ref{Source: idx, Relation: RelationCalls, Name: name, External: name}
+		if !hasRef(f, want) {
+			t.Errorf("missing ref %+v in %+v", want, f.Refs)
+		}
+	}
+	if _, sym := findSymbol(t, f, "last"); sym.StartLine != 7 {
+		t.Errorf("last = %+v", sym)
+	}
+}
+
 func TestParse_FoldsBlocksOfOversizedChunks(t *testing.T) {
 	src := `package big
 
