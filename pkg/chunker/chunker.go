@@ -408,7 +408,7 @@ func (b *builder) newFold(n *sitter.Node) *fold {
 	}
 
 	first, start, startRow := outer, outer.StartByte(), outer.StartPosition().Row
-	for prev := first.PrevNamedSibling(); prev != nil && b.leads(prev); prev = first.PrevNamedSibling() {
+	for prev := b.above(first); prev != nil && b.leads(prev); prev = b.above(first) {
 		// Some grammars include the line break in a comment node
 		end := prev.EndPosition()
 		if end.Column > 0 {
@@ -459,6 +459,15 @@ func (b *builder) newFold(n *sitter.Node) *fold {
 // nothing but more of the same is in between
 func (b *builder) leads(n *sitter.Node) bool {
 	return b.spec.leading[n.Kind()] || (b.spec.remark != nil && b.spec.remark(b, n))
+}
+
+// above returns the node before n. For the first definition of a group that
+// is the node before the group.
+func (b *builder) above(n *sitter.Node) *sitter.Node {
+	if p := n.Parent(); p != nil && b.spec.groups[p.Kind()] && n.PrevSibling() == nil {
+		n = p
+	}
+	return n.PrevNamedSibling()
 }
 
 func (b *builder) lineStart(offset uint) uint {

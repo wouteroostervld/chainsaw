@@ -20,6 +20,7 @@ import (
 	tree_sitter_rust "github.com/tree-sitter/tree-sitter-rust/bindings/go"
 	tree_sitter_typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 
+	tree_sitter_bcpl "github.com/wouteroostervld/chainsaw/pkg/chunker/bcpl"
 	tree_sitter_m68k "github.com/wouteroostervld/chainsaw/pkg/chunker/m68k"
 )
 
@@ -58,6 +59,7 @@ type langSpec struct {
 	markup       bool               // A document format: chunks only, no symbols
 	defs         map[string]defKind // Definition node kinds
 	wrappers     set                // Parent kinds that belong to the definition they wrap
+	groups       set                // Parent kinds that hold several definitions; what leads the group leads the first
 	leading      set                // Sibling kinds above a definition that belong to it
 	calls        map[string]string  // Call node kind -> field holding the callee ("" = the node itself)
 	selfNames    set                // Receivers that refer to the enclosing container
@@ -87,7 +89,7 @@ func (s *langSpec) language() *sitter.Language {
 }
 
 // sourceExtensions are file extensions that may appear in import paths
-var sourceExtensions = setOf(".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".h", ".hh", ".hpp", ".hxx", ".py", ".rb", ".s", ".asm", ".i")
+var sourceExtensions = setOf(".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".h", ".hh", ".hpp", ".hxx", ".py", ".rb", ".s", ".asm", ".i", ".b")
 
 var importSeparators = regexp.MustCompile(`::|[/.\\]`)
 
@@ -522,6 +524,26 @@ var rubySpec = &langSpec{
 	),
 }
 
+// BCPL has functions (LET f(x) = expression) and routines (LET f(x) BE
+// command), often chained with AND into one declaration. Headers are included
+// textually with GET.
+var bcplSpec = &langSpec{
+	name:    "bcpl",
+	grammar: tree_sitter_bcpl.Language,
+	comment: "//",
+	defs: map[string]defKind{
+		"function_definition": function,
+		"routine_definition":  function,
+	},
+	groups:      setOf("let_declaration"),
+	leading:     setOf("comment", "block_comment"),
+	calls:       map[string]string{"call_expression": "function"},
+	importKinds: setOf("get_directive"),
+	imports: func(b *builder, n *sitter.Node) {
+		b.addImport("", b.text(n.ChildByFieldName("path")), "")
+	},
+}
+
 // m68kLocal reports whether a label is local to the global label above it:
 // .loop, 1$, or \@ inside a macro
 func m68kLocal(name string) bool {
@@ -661,6 +683,8 @@ var extensions = map[string]*langSpec{
 	".hpp":      cppSpec,
 	".hxx":      cppSpec,
 	".rb":       rubySpec,
+	".b":        bcplSpec,
+	".bcpl":     bcplSpec,
 	".s":        m68kSpec,
 	".asm":      m68kSpec,
 	".i":        m68kSpec,
