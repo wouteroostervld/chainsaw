@@ -141,6 +141,24 @@ In BCPL (`.b`, `.bcpl`) a definition is a function or a routine, whether it is
 introduced by `LET` or by `AND`, and a `GET` is an import. Reserved words are
 upper case. Headers named `.h` are read as C++.
 
+## Seen in use
+
+Claude Code, reading the 3,200 lines of the 1985 Tripos BCPL code generator
+to reverse engineer the Amiga Kickstart ROM, on hearing that Chainsaw parses
+BCPL:
+
+![Claude Code session: after "/chainsaw works for BCPL!", Claude uses it on
+the code generator source and reports that it handles the 1985 syntax, down
+to nested routines, which makes the source easy to
+navigate](docs/chainsaw-bcpl.png)
+
+Where that session ended: the code generator running unmodified, and a
+routine of AmigaDOS compiled to the same 140 bytes as the ROM.
+
+![Claude Code report: the 1985 Tripos 68000 code generator runs under the
+Cambridge BCPL system, and a hand-written Fault routine compiles to 140
+bytes identical to the ROM at $FF4FA8](docs/cg68-fault-match.png)
+
 ## Installation
 
 ```bash
