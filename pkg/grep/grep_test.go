@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/wouteroostervld/chainsaw/pkg/chunker"
 )
 
 const goSource = `package store
@@ -155,5 +157,92 @@ func TestSearch_WhichFiles(t *testing.T) {
 	files, err = Search(`needle`, []string{filepath.Join(dir, "vendor", "e.go")}, Options{Exclude: []string{"vendor"}})
 	if err != nil || len(files) != 1 {
 		t.Errorf("explicit file: got %d files, err %v", len(files), err)
+	}
+}
+
+const pySource = `import os
+
+
+class Store:
+    def open(self, path):
+        self.path = path
+        return os.stat(path)
+
+
+def close(store, path=None):
+    store.path = path
+`
+
+func TestSearch_Signature(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, map[string]string{"store.go": goSource, "store.py": pySource, "notes.txt": "path\n"})
+
+	// path is all over the files; in a signature it is a parameter
+	files, err := Search(`\bpath\b`, []string{dir}, Options{Signature: true})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	want := []string{
+		"store.go: Opener.Open (METHOD) 15",
+		"store.go: Open (FUNCTION) 18",
+		"store.py: Store.open (METHOD) 05",
+		"store.py: close (FUNCTION) 10",
+	}
+	if got := summary(dir, files); !reflect.DeepEqual(got, want) {
+		t.Errorf("got\n%q\nwant\n%q", got, want)
+	}
+
+	// A file with matches, none of them in a signature, is not reported
+	files, err = Search(`Println`, []string{dir}, Options{Signature: true})
+	if err != nil || len(files) != 0 {
+		t.Errorf("got %v, %v, want nothing", summary(dir, files), err)
+	}
+}
+
+func TestMatch(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, map[string]string{"store.go": goSource, "store.py": pySource, ".git/hook.go": goSource})
+
+	tests := []struct {
+		name  string
+		query string
+		lang  string
+		opts  Options
+		want  []string
+	}{
+		{"a field of a node", `(method_declaration result: (type_identifier) @result)`, "", Options{},
+			[]string{"store.go: Store.Close (METHOD) 24"}},
+		{"nothing captured", `(function_declaration)`, "", Options{},
+			[]string{"store.go: Open (FUNCTION) 18"}},
+		{"a predicate, in every language it fits", `((identifier) @id (#eq? @id "path"))`, "", Options{},
+			[]string{
+				"store.go: Opener.Open (METHOD) 15", "store.go: Open (FUNCTION) 18 19",
+				"store.py: Store.open (METHOD) 05 06 07", "store.py: close (FUNCTION) 10 11",
+			}},
+		{"in signatures only", `((identifier) @id (#eq? @id "path"))`, "", Options{Signature: true},
+			[]string{
+				"store.go: Opener.Open (METHOD) 15", "store.go: Open (FUNCTION) 18",
+				"store.py: Store.open (METHOD) 05", "store.py: close (FUNCTION) 10",
+			}},
+		{"one language", `((identifier) @id (#eq? @id "path"))`, "python", Options{Signature: true},
+			[]string{"store.py: Store.open (METHOD) 05", "store.py: close (FUNCTION) 10"}},
+		{"a capture for the query alone", `(function_definition name: (identifier) @_name parameters: (parameters (default_parameter) @default) (#match? @_name "^cl"))`, "", Options{},
+			[]string{"store.py: close (FUNCTION) 10"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			query, err := chunker.NewQuery(tt.query, tt.lang)
+			if err != nil {
+				t.Fatalf("NewQuery failed: %v", err)
+			}
+			defer query.Close()
+			files, err := Match(query, []string{dir}, tt.opts)
+			if err != nil {
+				t.Fatalf("Match failed: %v", err)
+			}
+			if got := summary(dir, files); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got\n%q\nwant\n%q", got, tt.want)
+			}
+		})
 	}
 }

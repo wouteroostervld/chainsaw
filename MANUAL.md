@@ -1,14 +1,15 @@
 # Chainsaw Manual
 
-Chainsaw looks at code through its syntax tree. It has three ways of looking,
-`grep`, `outline` and `query`, and one way of showing what it found in more
-or less context, `--expand`. A fourth way of looking, `search`, finds code by
-what it means; it needs a model and is off until you switch it on.
+Chainsaw looks at code through its syntax tree. It has four ways of looking,
+`grep`, `match`, `outline` and `query`, and one way of showing what it found
+in more or less context, `--expand`. A fifth way of looking, `search`, finds
+code by what it means; it needs a model and is off until you switch it on.
 
 ## Contents
 
 - [Installation](#installation)
 - [grep](#grep): search, with the definition around each match
+- [match](#match): search the syntax tree, in signatures or anywhere
 - [outline](#outline): a file folded to its signatures
 - [query](#query): the code graph
 - [search](#search): by meaning, when embeddings are switched on
@@ -65,6 +66,7 @@ one.
 | `-F` | The pattern is a literal string |
 | `-w` | Match whole words only |
 | `-s` | Only list the definitions that contain a match, with a count |
+| `--signature` | Only matches in the signature of a definition |
 | `--limit N` | Show the first N matching lines only; with `-s`, the first N definitions |
 | `--oneline` | One match on a line: `path:line: [definition] text` |
 | `--width N` | Cut lines to N characters |
@@ -105,6 +107,144 @@ pkg/db/files.go:104-117: [DB.ForgetFile] 2
 Options may stand before or after the pattern and the paths, here and in the
 other commands. Put `--` before a pattern that begins with a dash:
 `chainsaw grep -F -- '--limit'`.
+
+`--signature` keeps only the matches that begin in the signature of a
+definition: in the definition, before its body. That is the same in every
+language, and tells what a function takes from what it does with it:
+
+```
+$ chainsaw grep --signature 'context\.Context' pkg/indexer
+pkg/indexer/embeddings.go
+  METHOD Embedder.Embed  (lines 26-26)
+    26: Embed(ctx context.Context, texts []string) ([][]float32, error)
+  METHOD Embeddings.Index  (lines 65-109)
+    67: func (e *Embeddings) Index(ctx context.Context, src *Source) error {
+```
+
+A signature here is text. To ask for its parts (the type of a result, the
+number of parameters), use `match`.
+
+## match
+
+```bash
+chainsaw match [options] <query> [path...]
+chainsaw match --tree [--lines N-M] <file>
+```
+
+Searches the syntax tree with a [tree-sitter query](https://tree-sitter.github.io/tree-sitter/using-parsers/queries/),
+where `grep` searches the text with a regular expression. What it finds is
+shown as `grep` shows it, with the definition around each match, and takes the
+same options to shape it: `-s`, `--limit`, `--oneline`, `--width`, `--expand`.
+No index is needed.
+
+A query is a pattern of nodes, written as the tree is written:
+
+```
+$ chainsaw match -s '(function_declaration result: (pointer_type) @r)' pkg/grep
+pkg/grep/grep.go
+  FUNCTION matchFile  (lines 211-231): 1
+
+1 matching lines in 1 files
+```
+
+| | |
+|---|---|
+| `(kind)` | A node of that kind |
+| `(kind (other))` | ...with a node of the other kind right below it |
+| `(kind field: (other))` | ...in that field |
+| `(kind !field)` | ...without that field |
+| `(_)`, `_` | Any named node; any node at all |
+| `"return"` | A keyword or sign |
+| `(a) @x` | Report this node. A capture named `@_x` is not reported, and only serves a condition |
+| `(a)*`, `(a)+`, `(a)?` | Repeated, or optional |
+| `[(a) (b)]` | One or the other |
+| `(kind . (a))`, `(a) . (b)` | `a` is the first node below; `b` follows `a` directly |
+| `(#eq? @x "text")`, `(#eq? @x @y)` | The capture is this text; two captures are alike |
+| `(#match? @x "^regexp")` | The capture matches (Go syntax, not PCRE) |
+| `(#any-of? @x "a" "b")` | The capture is one of these |
+| `#not-eq?`, `#not-match?`, `#not-any-of?` | The opposites |
+
+A pattern that captures nothing is reported as a whole, at the line it
+starts on. Conditions stand last in a pattern, which then needs brackets of
+its own: `((identifier) @p (#eq? @p "ctx"))`.
+
+The kinds of nodes and the names of fields are those of a grammar, and differ
+from one language to the next. `--tree` shows the tree of a file as a query
+sees it, to write the query from:
+
+```
+$ chainsaw match --tree --lines 213 pkg/grep/grep.go
+(source_file)  [1-279]
+  (function_declaration)  [213-231]
+    name: (identifier) matchFile  [213]
+    parameters: (parameter_list)  [213]
+      (parameter_declaration)  [213]
+        name: (identifier) re  [213]
+        type: (pointer_type)  [213]
+          (qualified_type)  [213]
+            package: (package_identifier) pcre  [213]
+            name: (type_identifier) Regexp  [213]
+      ...
+```
+
+A query is tried on every language and searches the files of the languages
+it fits, so `(identifier)` looks in nearly all of them and
+`(function_declaration)` in Go, JavaScript and TypeScript. Of a query with
+several patterns, a language takes the ones that fit it, so one query can say
+the same thing in the words of more than one grammar:
+
+```bash
+# The names of functions, in Go and JavaScript and in Python and C
+chainsaw match '(function_declaration name: (_) @n) (function_definition name: (_) @n)'
+```
+
+It is an error only when no pattern fits any language; `--lang` holds a query
+to one. When nothing is found, a note names the languages that were searched.
+
+| Option | |
+|---|---|
+| `--signature` | Only captures in the signature of a definition |
+| `--lang NAME` | Only this language |
+| `--tree` | Show the syntax tree of a file instead of searching |
+| `--lines N-M` | With `--tree`, only the nodes on these lines |
+
+### Matching on signatures
+
+Tree-sitter itself has no notion of a signature: a grammar names the parts of
+a definition as it likes (`result` in Go, `return_type` in Rust and Python,
+`type` in C and Java), and a query can only ask for them in those words. So
+there are two ways to match on a signature.
+
+`--signature` is the one that is the same everywhere. It keeps the captures
+that begin in the signature of a definition as chainsaw knows it, the
+definition up to its body, whatever the grammar calls its parts:
+
+```bash
+# Definitions with a parameter named ctx, in any language
+chainsaw match --signature '((identifier) @p (#eq? @p "ctx"))'
+
+# Anything with a pointer in its signature: a pattern for Go and Rust, one for C and C++
+chainsaw match --signature -s '(pointer_type) @p (pointer_declarator) @p'
+```
+
+The other is to ask the grammar for the shape, which is exact but belongs to
+one language:
+
+```bash
+# Go methods that take a context and return only an error
+chainsaw match '(method_declaration
+    parameters: (parameter_list (parameter_declaration type: (_) @_t))
+    result: (type_identifier) @_r
+    (#eq? @_t "context.Context") (#eq? @_r "error")) @m'
+
+# BCPL functions of exactly four parameters
+chainsaw match '(function_definition parameters: (parameter_list
+    . (parameter) . (parameter) . (parameter) . (parameter) .)) @f'
+
+# 68000: a jsr right after a movem
+chainsaw match '((instruction mnemonic: (_) @_a) . (instruction mnemonic: (_) @_b) @call
+    (#eq? @_a "movem") (#eq? @_b "jsr"))'
+```
 
 ## outline
 
@@ -395,7 +535,7 @@ the others.
 | `graph` | Definitions, calls and imports | `query`, `--expand calls` | Parsing: milliseconds a file | on |
 | `embeddings` | A vector for each chunk of code | `search` | A request to a model for every file | off |
 
-`grep` and `outline` use no index at all.
+`grep`, `match` and `outline` use no index at all.
 
 **Switching a kind on or off** is done under `index:`, in the profile of
 `~/.chainsaw/config.yaml` for everything, or in a `.config.yaml` in a

@@ -5,12 +5,13 @@ description: Structural code search for a local codebase with the chainsaw CLI. 
 
 # Chainsaw
 
-`chainsaw` looks at code through its syntax tree. Three commands, all
+`chainsaw` looks at code through its syntax tree. Four commands, all
 read-only, plus a fourth that only works where it is switched on:
 
 | Command | Answers | Needs the index |
 |---|---|---|
 | `chainsaw grep <pattern> [path...]` | Where is this text, and which definition is it inside? | No |
+| `chainsaw match <query> [path...]` | Which definitions have this shape (a parameter, a result type, a run of instructions)? | No |
 | `chainsaw outline <file>` | What is in this file, without reading it? | No |
 | `chainsaw query '<cypher>'` | Who calls this? What does it call? What implements it? | Yes, kept current automatically |
 | `chainsaw search <words>` | Where is the code that does this, when I have no name for it? | Yes, and off by default |
@@ -47,6 +48,38 @@ line ranges tell you what to read.
 
 When there may be much, pass `--limit N` rather than piping into `head`: the
 last line still gives the total, so you know what you have not seen.
+
+To search only what definitions declare, not what they do, add
+`--signature`: a match then counts only in the signature of a definition, in
+any language.
+
+```bash
+chainsaw grep --signature -s 'context\.Context'   # what takes or returns a context
+```
+
+## match: search the syntax tree
+
+When the question is about structure and a regular expression would guess,
+give a tree-sitter query. Results look like those of `grep` and take the same
+options (`-s`, `--limit`, `--oneline`, `--expand`).
+
+```bash
+chainsaw match --tree --lines 40-52 pkg/grep/grep.go    # the tree, to write a query from
+chainsaw match -s '(function_declaration result: (pointer_type) @r)'
+chainsaw match --signature '((identifier) @p (#eq? @p "ctx"))'   # in signatures, any language
+chainsaw match '(function_definition parameters: (parameter_list . (parameter) . (parameter) .)) @f'
+```
+
+- `(kind field: (kind))` is a node; `@name` reports it, `@_name` does not;
+  `(_)` is any node; `.` between nodes means "directly follows".
+- Conditions come last in a pattern that has brackets of its own:
+  `(#eq? @x "text")`, `(#match? @x "^re")`, `(#any-of? @x "a" "b")`.
+- Kinds and fields differ between languages. **Look at `--tree` of a real
+  file first** instead of guessing them. A query searches the languages
+  whose grammar it fits, and of several patterns each language takes the
+  ones that fit it; `--lang go` holds it to one.
+- `--signature` keeps the captures before the body of a definition, which is
+  how to match on signatures without knowing each grammar.
 
 ## outline: a file folded to its signatures
 
@@ -153,6 +186,7 @@ or a further filter.
 
 - **"Where is X used?"** `chainsaw grep -s 'X'`: every use, grouped by definition.
 - **"Change X everywhere."** `chainsaw grep 'X'` for the complete list. Never rely on the graph alone for completeness: it does not see strings, comments, macros or reflection.
+- **"Which functions take or return X?"** `chainsaw grep --signature -s 'X'`; for an exact shape, `chainsaw match`.
 - **"What does this file do?"** `chainsaw outline <file>`.
 - **"Who calls X?" / "What does X reach?"** `chainsaw query`, then `--expand body` to read the callers.
 - **"What implements this interface?"** `chainsaw query` with `[:implements]`.

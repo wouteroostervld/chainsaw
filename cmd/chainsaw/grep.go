@@ -26,6 +26,8 @@ Options:
   -F               The pattern is a literal string
   -w               Match whole words only
   -s               Only list the definitions that contain a match, with a count
+  --signature      Only matches in the signature of a definition: in the
+                   definition, before its body
   --limit N        Show the first N matching lines only (with -s, the first N
                    definitions); the count of all of them is still given
   --oneline        One match on a line, as path:line: [definition] text
@@ -43,27 +45,36 @@ Examples:
   chainsaw grep 'IS_EXT2_SB' fs/ext4
   chainsaw grep -s 'ctx\.Done\(\)'
   chainsaw grep -s --limit 40 'err' pkg
-  chainsaw grep --expand body '(?<=func )handle\w+'`
+  chainsaw grep --expand body '(?<=func )handle\w+'
+  chainsaw grep --signature 'context\.Context'
 
-func handleGrep(args []string) {
-	flags := flag.NewFlagSet("grep", flag.ExitOnError)
-	flags.Usage = func() { fmt.Println(grepUsage) }
-	ignoreCase := flags.Bool("i", false, "")
-	fixed := flags.Bool("F", false, "")
-	word := flags.Bool("w", false, "")
-	symbolsOnly := flags.Bool("s", false, "")
-	expand := flags.String("expand", "", "")
-	noIndex := flags.Bool("no-index", false, "")
-	limit := flags.Int("limit", 0, "")
-	oneline := flags.Bool("oneline", false, "")
-	width := flags.Int("width", 0, "")
-	given := parse(flags, args)
+To match on the syntax tree and not on the text, see chainsaw match.`
 
-	if len(given) < 1 {
-		fmt.Println(grepUsage)
-		os.Exit(1)
+// shape is how a command that searches files shows what it found
+type shape struct {
+	symbolsOnly *bool
+	expand      *string
+	noIndex     *bool
+	limit       *int
+	oneline     *bool
+	width       *int
+}
+
+// shapeFlags adds the options that shape the matches in files
+func shapeFlags(flags *flag.FlagSet) shape {
+	return shape{
+		symbolsOnly: flags.Bool("s", false, ""),
+		expand:      flags.String("expand", "", ""),
+		noIndex:     flags.Bool("no-index", false, ""),
+		limit:       flags.Int("limit", 0, ""),
+		oneline:     flags.Bool("oneline", false, ""),
+		width:       flags.Int("width", 0, ""),
 	}
-	paths := given[1:]
+}
+
+// absolute makes the paths to search absolute; the current directory is
+// searched when none is given
+func absolute(paths []string) []string {
 	if len(paths) == 0 {
 		paths = []string{"."}
 	}
@@ -74,16 +85,40 @@ func handleGrep(args []string) {
 		}
 		paths[i] = abs
 	}
+	return paths
+}
 
-	files, err := grep.Search(given[0], paths, grep.Options{
+func handleGrep(args []string) {
+	flags := flag.NewFlagSet("grep", flag.ExitOnError)
+	flags.Usage = func() { fmt.Println(grepUsage) }
+	ignoreCase := flags.Bool("i", false, "")
+	fixed := flags.Bool("F", false, "")
+	word := flags.Bool("w", false, "")
+	signature := flags.Bool("signature", false, "")
+	shaped := shapeFlags(flags)
+	given := parse(flags, args)
+
+	if len(given) < 1 {
+		fmt.Println(grepUsage)
+		os.Exit(1)
+	}
+
+	files, err := grep.Search(given[0], absolute(given[1:]), grep.Options{
 		IgnoreCase: *ignoreCase,
 		Fixed:      *fixed,
 		Word:       *word,
 		Exclude:    activeProfile().Exclude,
+		Signature:  *signature,
 	})
 	if err != nil {
 		fail("%v", err)
 	}
+	shaped.report(files)
+}
+
+// report writes the matches in files in the shape that was asked for
+func (sh shape) report(files []grep.File) {
+	symbolsOnly, expand, noIndex, limit, oneline, width := sh.symbolsOnly, sh.expand, sh.noIndex, sh.limit, sh.oneline, sh.width
 	if len(files) == 0 {
 		fmt.Println("No matches")
 		os.Exit(1)
