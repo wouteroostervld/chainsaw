@@ -84,7 +84,7 @@ func TestQuery_Languages(t *testing.T) {
 		"no language has the kind":  {`(no_such_kind)`, "", "fits no language"},
 		"the named language hasn't": {`(method_declaration)`, "python", "python: "},
 		"not a query":               {`(method_declaration`, "", "Invalid syntax"},
-		"not a language":            {`(identifier)`, "cobol", "unknown language"},
+		"not a language":            {`(identifier)`, "fortran", "unknown language"},
 	} {
 		if _, err := NewQuery(tt.query, tt.language); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("%s: error = %v, want one with %q", name, err, tt.want)

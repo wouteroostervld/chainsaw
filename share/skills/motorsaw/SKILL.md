@@ -18,7 +18,8 @@ read-only, plus a fourth that only works where it is switched on:
 
 Run them from inside the project. Parsed languages: Go, Python, JavaScript,
 TypeScript, Rust, Java, C, C++, Ruby, BCPL, Motorola 68000 assembly (a global
-label and the lines under it are one definition).
+label and the lines under it are one definition), IBM Enterprise COBOL (a
+paragraph or section is a definition; names are upper case).
 
 If `motorsaw` is not on the PATH, say so and work with plain grep; do not
 install it yourself. It is built from

@@ -759,3 +759,80 @@ func TestParse_Unsupported(t *testing.T) {
 		t.Error("Supported does not go by file extension")
 	}
 }
+
+const cobolSource = `       IDENTIFICATION DIVISION.
+       PROGRAM-ID. payroll.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       COPY EMPREC.
+       01  WS-TOTAL          PIC 9(7)V99 COMP-3.
+       01  FILLER            PIC X.
+       05  WS-FIELD          PIC X.
+       PROCEDURE DIVISION.
+       MAIN-SECTION SECTION.
+       MAIN-PARA.
+           PERFORM INIT-PARA.
+           PERFORM calc-para THRU CALC-EXIT.
+           PERFORM VARYING WS-I FROM 1 BY 1 UNTIL WS-I > 3
+              ADD 1 TO WS-TOTAL
+           END-PERFORM.
+           CALL 'TAXCALC' USING WS-TOTAL.
+           CALL WS-DYNAMIC.
+           EXEC CICS LINK PROGRAM('AUDITLOG') END-EXEC.
+           GO TO CALC-EXIT.
+       INIT-PARA.
+           MOVE 0 TO WS-TOTAL.
+       CALC-PARA.
+           ADD 1 TO WS-TOTAL.
+           GO TO CALC-PARA.
+       CALC-EXIT.
+           EXIT.
+`
+
+func TestParse_Cobol(t *testing.T) {
+	f := parse(t, "pay.CBL", cobolSource)
+
+	want := []struct {
+		name, etype string
+		start, end  int
+	}{
+		{"PAYROLL", TypeFunction, 1, 26},
+		{"WS-TOTAL", TypeStruct, 6, 6},
+		{"MAIN-SECTION", TypeFunction, 10, 10},
+		{"MAIN-PARA", TypeFunction, 11, 20},
+		{"INIT-PARA", TypeFunction, 21, 22},
+		{"CALC-PARA", TypeFunction, 23, 25},
+		{"CALC-EXIT", TypeFunction, 26, 26},
+	}
+	if len(f.Symbols) != len(want) {
+		t.Fatalf("got %d symbols, want %d: %+v", len(f.Symbols), len(want), f.Symbols)
+	}
+	for i, w := range want {
+		s := f.Symbols[i]
+		if s.Name != w.name || s.Type != w.etype || s.StartLine != w.start {
+			t.Errorf("symbol %d is %s %s from line %d, want %s %s from line %d", i, s.Type, s.Name, s.StartLine, w.etype, w.name, w.start)
+		}
+	}
+
+	main, _ := findSymbol(t, f, "MAIN-PARA")
+	calc, _ := findSymbol(t, f, "CALC-PARA")
+	for _, ref := range []Ref{
+		{Source: -1, Relation: RelationImports, Name: "EMPREC", ImportBase: "EMPREC", External: "EMPREC"},
+		{Source: main, Relation: RelationCalls, Name: "INIT-PARA", External: "INIT-PARA"},
+		{Source: main, Relation: RelationCalls, Name: "CALC-PARA", External: "CALC-PARA"},
+		{Source: main, Relation: RelationCalls, Name: "CALC-EXIT", External: "CALC-EXIT"},
+		{Source: main, Relation: RelationCalls, Name: "TAXCALC", External: "TAXCALC"},
+		{Source: main, Relation: RelationCalls, Name: "AUDITLOG", External: "AUDITLOG"},
+	} {
+		if !hasRef(f, ref) {
+			t.Errorf("missing ref %+v in %+v", ref, f.Refs)
+		}
+	}
+	// A loop variable is not a paragraph, a dynamic call has no name, and a
+	// jump to the paragraph it is in goes nowhere
+	for _, r := range f.Refs {
+		if r.Name == "WS-I" || r.Name == "WS-DYNAMIC" || (r.Source == calc && r.Name == "CALC-PARA") {
+			t.Errorf("unexpected ref %+v", r)
+		}
+	}
+}

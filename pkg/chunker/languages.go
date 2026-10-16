@@ -21,6 +21,7 @@ import (
 	tree_sitter_typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 
 	tree_sitter_bcpl "github.com/wouteroostervld/motorsaw/pkg/chunker/bcpl"
+	tree_sitter_cobol "github.com/wouteroostervld/motorsaw/pkg/chunker/cobol"
 	tree_sitter_m68k "github.com/wouteroostervld/motorsaw/pkg/chunker/m68k"
 )
 
@@ -78,6 +79,9 @@ type langSpec struct {
 	dataKinds  set                                   // Kinds that make what a label names data and not code
 	// target names the label an instruction calls or jumps to; "" when it does neither
 	target func(b *builder, n *sitter.Node, sc scope) string
+	// shared says the extensions are used by other languages too, so that a
+	// file which parses badly is taken to be in one of those
+	shared bool
 
 	once sync.Once
 	lang *sitter.Language
@@ -629,6 +633,150 @@ var m68kSpec = &langSpec{
 	labelKinds: setOf("label", "external_label"),
 	dataKinds:  setOf("data_constant", "data_space", "include_bin"),
 	target:     m68kTarget,
+	shared:     true,
+}
+
+// cobolName is how a name is kept: COBOL does not tell cases apart
+func cobolName(s string) string { return strings.ToUpper(strings.Trim(s, "'\"")) }
+
+// cobolIsName reports whether a node is a name, as opposed to a literal or an expression
+func cobolIsName(n *sitter.Node) bool {
+	return n.IsNamed() && (n.Kind() == "WORD" || n.Kind() == "numeric_name")
+}
+
+// cobolNamedChild returns the first child of a kind, or nil
+func cobolNamedChild(n *sitter.Node, kind string) *sitter.Node {
+	if n == nil {
+		return nil
+	}
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		if c := n.NamedChild(i); c.Kind() == kind {
+			return c
+		}
+	}
+	return nil
+}
+
+// cobolFirstName returns the name a paragraph, section or program id starts with
+func cobolFirstName(b *builder, n *sitter.Node) string {
+	if n == nil {
+		return ""
+	}
+	for i := uint(0); i < n.NamedChildCount(); i++ {
+		if c := n.NamedChild(i); cobolIsName(c) {
+			return cobolName(b.text(c))
+		}
+	}
+	return ""
+}
+
+// cobolLevelOne reports whether a data description starts a record: level 01
+// or 77. The items below a record are its fields, and are not definitions.
+func cobolLevelOne(b *builder, n *sitter.Node) bool {
+	level := b.text(cobolNamedChild(n, "level_number"))
+	return level == "01" || level == "1" || level == "77"
+}
+
+// cobolTarget adds the calls a statement makes. A paragraph or section is
+// performed or jumped to by name; a program is called by a literal name, or
+// through EXEC CICS LINK and XCTL.
+func cobolTarget(b *builder, n *sitter.Node, sc scope) string {
+	call := func(name string) {
+		if name != "" {
+			b.addRef(Ref{Source: sc.sym, Relation: RelationCalls, Name: name, External: name})
+		}
+	}
+	switch n.Kind() {
+	case "perform_statement":
+		// PERFORM first [THRU last]; a name after VARYING is a variable
+		names := make([]string, 0, 2)
+		for i := uint(0); i < n.ChildCount(); i++ {
+			c := n.Child(i)
+			switch {
+			case cobolIsName(c) && len(names) == 0:
+				names = append(names, cobolName(b.text(c)))
+			case cobolIsName(c) && len(names) == 1 && i > 0 && thru(b.text(n.Child(i-1))):
+				names = append(names, cobolName(b.text(c)))
+			}
+		}
+		for _, name := range names {
+			call(name)
+		}
+	case "go_to_statement":
+		for i := uint(0); i < n.ChildCount(); i++ {
+			c := n.Child(i)
+			if !c.IsNamed() && strings.EqualFold(b.text(c), "DEPENDING") {
+				break
+			}
+			if name := cobolName(b.text(c)); cobolIsName(c) && (sc.sym < 0 || b.file.Symbols[sc.sym].Name != name) {
+				call(name)
+			}
+		}
+	case "call_statement":
+		if c := n.NamedChild(0); c != nil && c.Kind() == "string_literal" {
+			call(cobolName(b.text(c)))
+		}
+	case "cics_link", "cics_xctl":
+		for i := uint(0); i < n.NamedChildCount(); i++ {
+			opt := n.NamedChild(i)
+			if opt.Kind() == "cics_option" && opt.NamedChildCount() == 2 &&
+				strings.EqualFold(b.text(opt.NamedChild(0)), "PROGRAM") && opt.NamedChild(1).Kind() == "string_literal" {
+				call(cobolName(b.text(opt.NamedChild(1))))
+			}
+		}
+	}
+	return ""
+}
+
+func thru(word string) bool {
+	return strings.EqualFold(word, "THRU") || strings.EqualFold(word, "THROUGH")
+}
+
+// IBM Enterprise COBOL, with EXEC CICS and EXEC SQL. The program is a
+// function named by its PROGRAM-ID, which is what CALL names; the paragraphs
+// and sections are functions inside it. A paragraph runs to the next one, as
+// a label does in assembly, since the grammar does not nest them. A record
+// is its 01 line only, as the fields below it are siblings in the tree.
+var cobolSpec = &langSpec{
+	name:    "cobol",
+	grammar: tree_sitter_cobol.Language,
+	comment: "*>",
+	defs: map[string]defKind{
+		"program_definition": function,
+		"data_description":   {etype: TypeStruct},
+	},
+	leading:     setOf("comment"),
+	importKinds: setOf("copy_statement"),
+	imports: func(b *builder, n *sitter.Node) {
+		b.addImport("", cobolFirstNameOrLiteral(b, n), "")
+	},
+	describe: func(b *builder, n *sitter.Node, d *def) bool {
+		switch n.Kind() {
+		case "program_definition":
+			d.name = cobolFirstName(b, cobolNamedChild(cobolNamedChild(n, "identification_division"), "program_id_paragraph"))
+		case "section", "paragraph":
+			d.name = cobolFirstName(b, n)
+		case "data_description":
+			if !cobolLevelOne(b, n) {
+				return false
+			}
+			d.name = cobolName(b.text(cobolNamedChild(n, "entry_name")))
+			return d.name != "FILLER"
+		}
+		return true
+	},
+	label: func(b *builder, n *sitter.Node) bool {
+		return n.Kind() == "section" || n.Kind() == "paragraph"
+	},
+	labelKinds: setOf("section", "paragraph"),
+	target:     cobolTarget,
+}
+
+func cobolFirstNameOrLiteral(b *builder, n *sitter.Node) string {
+	if n.NamedChildCount() == 0 {
+		return ""
+	}
+	return cobolName(b.text(n.NamedChild(0)))
 }
 
 // Markdown is split along its headings by markdownSections; it has no grammar
@@ -688,6 +836,10 @@ var extensions = map[string]*langSpec{
 	".s":        m68kSpec,
 	".asm":      m68kSpec,
 	".i":        m68kSpec,
+	".cbl":      cobolSpec,
+	".cob":      cobolSpec,
+	".cobol":    cobolSpec,
+	".cpy":      cobolSpec,
 }
 
 func init() {

@@ -175,7 +175,7 @@ func (s *langSpec) parse(src []byte) *sitter.Tree {
 	if tree == nil {
 		return nil
 	}
-	if s.label != nil && !parsesWell(tree.RootNode()) {
+	if s.shared && !parsesWell(tree.RootNode()) {
 		tree.Close()
 		return nil
 	}

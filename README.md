@@ -125,8 +125,8 @@ library there. See [The graph](MANUAL.md#the-graph) in the manual.
 
 ## Languages
 
-Go, Python, JavaScript, TypeScript/TSX, Rust, Java, C, C++, Ruby, BCPL and
-Motorola 68000 assembly are parsed for definitions, calls and imports. Go
+Go, Python, JavaScript, TypeScript/TSX, Rust, Java, C, C++, Ruby, BCPL,
+Motorola 68000 assembly and IBM Enterprise COBOL are parsed for definitions, calls and imports. Go
 calls are resolved exactly with the Go type checker, including calls through
 interfaces. Markdown, HTML and XML fold into an outline but define no symbols.
 
@@ -141,6 +141,14 @@ In BCPL (`.b`, `.bcpl`) a definition is a function or a routine, whether it is
 introduced by `LET` or by `AND`, and a `GET` is an import. Reserved words are
 upper case. Square brackets are parentheses, as in the TRIPOS compiler
 (`s%[i+1]`); only `v[i]` is a subscript. Headers named `.h` are read as C++.
+
+In COBOL (`.cbl`, `.cob`, `.cobol`, `.cpy`; IBM Enterprise COBOL, with `EXEC
+CICS` and `EXEC SQL`) the `PROGRAM-ID` is a `FUNCTION`, and so is each section
+and paragraph inside it, up to the next one. A `01` or `77` record is a
+`STRUCT`, on its one line. `PERFORM`, `GO TO`, `CALL 'NAME'` and `EXEC CICS
+LINK` or `XCTL PROGRAM('NAME')` are calls, and `COPY` is an import. Names are
+kept in upper case, as COBOL does not tell cases apart. Free-form source is not
+supported by the grammar.
 
 ## Seen in use
 
