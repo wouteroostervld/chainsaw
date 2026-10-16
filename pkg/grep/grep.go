@@ -16,8 +16,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/wouteroostervld/chainsaw/pkg/chunker"
-	"github.com/wouteroostervld/chainsaw/pkg/pcre"
+	"github.com/wouteroostervld/motorsaw/pkg/chunker"
+	"github.com/wouteroostervld/motorsaw/pkg/pcre"
 )
 
 // maxFileSize is the largest file that is searched

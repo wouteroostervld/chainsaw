@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/wouteroostervld/chainsaw/pkg/config"
+	"github.com/wouteroostervld/motorsaw/pkg/config"
 )
 
 // Projects tells which project a file is in, and where the references of a

@@ -7,12 +7,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wouteroostervld/chainsaw/pkg/chunker"
-	"github.com/wouteroostervld/chainsaw/pkg/grep"
+	"github.com/wouteroostervld/motorsaw/pkg/chunker"
+	"github.com/wouteroostervld/motorsaw/pkg/grep"
 )
 
-const matchUsage = `Usage: chainsaw match [options] <query> [path...]
-       chainsaw match --tree [--lines N-M] <file>
+const matchUsage = `Usage: motorsaw match [options] <query> [path...]
+       motorsaw match --tree [--lines N-M] <file>
 
 Searches the syntax tree of files with a tree-sitter query, and shows each
 node the query captures with the definition it is in, as grep does for text.
@@ -62,22 +62,22 @@ Options:
 
 Examples:
   # Go functions that return a pointer
-  chainsaw match '(function_declaration result: (pointer_type) @r)'
+  motorsaw match '(function_declaration result: (pointer_type) @r)'
 
   # Definitions in any language with a parameter named ctx
-  chainsaw match --signature '((identifier) @p (#eq? @p "ctx"))'
+  motorsaw match --signature '((identifier) @p (#eq? @p "ctx"))'
 
   # Anything with a pointer in its signature, in Go and Rust and in C and C++
-  chainsaw match --signature -s '(pointer_type) @p (pointer_declarator) @p'
+  motorsaw match --signature -s '(pointer_type) @p (pointer_declarator) @p'
 
   # Go methods that take a context and return only an error
-  chainsaw match '(method_declaration
+  motorsaw match '(method_declaration
       parameters: (parameter_list (parameter_declaration type: (_) @_t))
       result: (type_identifier) @_r
       (#eq? @_t "context.Context") (#eq? @_r "error")) @m'
 
   # The tree of a few lines
-  chainsaw match --tree --lines 40-52 pkg/grep/grep.go`
+  motorsaw match --tree --lines 40-52 pkg/grep/grep.go`
 
 func handleMatch(args []string) {
 	usage := fmt.Sprintf(matchUsage, strings.Join(chunker.QueryLanguages(), ", "))

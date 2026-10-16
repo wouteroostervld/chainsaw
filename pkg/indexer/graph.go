@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/wouteroostervld/chainsaw/pkg/chunker"
-	"github.com/wouteroostervld/chainsaw/pkg/config"
-	"github.com/wouteroostervld/chainsaw/pkg/db"
-	"github.com/wouteroostervld/chainsaw/pkg/gotypes"
+	"github.com/wouteroostervld/motorsaw/pkg/chunker"
+	"github.com/wouteroostervld/motorsaw/pkg/config"
+	"github.com/wouteroostervld/motorsaw/pkg/db"
+	"github.com/wouteroostervld/motorsaw/pkg/gotypes"
 )
 
 // GraphStore is where the graph module keeps what it derives from a file

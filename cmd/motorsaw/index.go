@@ -12,33 +12,33 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wouteroostervld/chainsaw/pkg/chunker"
-	"github.com/wouteroostervld/chainsaw/pkg/config"
-	"github.com/wouteroostervld/chainsaw/pkg/db"
-	"github.com/wouteroostervld/chainsaw/pkg/filter"
-	"github.com/wouteroostervld/chainsaw/pkg/indexer"
+	"github.com/wouteroostervld/motorsaw/pkg/chunker"
+	"github.com/wouteroostervld/motorsaw/pkg/config"
+	"github.com/wouteroostervld/motorsaw/pkg/db"
+	"github.com/wouteroostervld/motorsaw/pkg/filter"
+	"github.com/wouteroostervld/motorsaw/pkg/indexer"
 )
 
-const indexUsage = `Usage: chainsaw index [options] <path>...
+const indexUsage = `Usage: motorsaw index [options] <path>...
 
 Indexes source files, in every kind of index that is switched on for them:
 
   graph        Definitions, calls and imports, read from the syntax tree.
                On by default; takes seconds.
-  embeddings   A vector for each chunk of code, for "chainsaw search". Off by
+  embeddings   A vector for each chunk of code, for "motorsaw search". Off by
                default: it needs a model, and a request to it for every file.
 
-Which are on is set in ~/.chainsaw/config.yaml, and for a project in a
-.config.yaml in its directory; "chainsaw status" shows what is on here. A
+Which are on is set in ~/.motorsaw/config.yaml, and for a project in a
+.config.yaml in its directory; "motorsaw status" shows what is on here. A
 kind that is switched off for a file drops what it held of it. Each path is a file or a directory; directories are searched for
 source files, skipping the excluded directories and file blacklist of your
 configuration. Files that have not been modified since they were indexed are
 skipped, and a kind of index that already holds a file as it is does not
 redo it when another is switched on. When a file under a given directory is gone from disk, the index
-forgets it. Chainsaw never deletes or changes source files. A file named directly is indexed whatever the configuration
+forgets it. Motorsaw never deletes or changes source files. A file named directly is indexed whatever the configuration
 excludes; one in a language that cannot be parsed is passed over.
 
-"chainsaw query" and "chainsaw search" do this by themselves for the current
+"motorsaw query" and "motorsaw search" do this by themselves for the current
 directory, each for the kind of index it uses, so running it by hand is only
 needed for large trees or to index something elsewhere.
 
@@ -49,11 +49,11 @@ Options:
   -0               With -, paths on standard input end in a NUL byte
 
 Examples:
-  chainsaw index .
-  chainsaw index pkg cmd/chainsaw/main.go
-  git diff --name-only | chainsaw index -
-  find . -name '*.go' -newer Makefile -print0 | xargs -0 chainsaw index
-  find . -name '*.py' -print0 | chainsaw index -0 -`
+  motorsaw index .
+  motorsaw index pkg cmd/motorsaw/main.go
+  git diff --name-only | motorsaw index -
+  find . -name '*.go' -newer Makefile -print0 | xargs -0 motorsaw index
+  find . -name '*.py' -print0 | motorsaw index -0 -`
 
 // autoIndexLimit is the most files a query will index by itself. Parsing
 // more than this takes long enough that it should be asked for.
@@ -433,7 +433,7 @@ func excluded(dir string, exclude []string) bool {
 // autoIndex brings one kind of index up to date with the current directory
 // before it is used, so results never come from stale or missing files. It
 // says what it did on standard error, and leaves a tree that is too large to
-// index in passing for "chainsaw index".
+// index in passing for "motorsaw index".
 func autoIndex(database *db.DB, cwd string, kind string) {
 	if cwd == "" {
 		return
@@ -452,7 +452,7 @@ func autoIndex(database *db.DB, cwd string, kind string) {
 	case err != nil:
 		fmt.Fprintf(os.Stderr, "note: could not bring the %s index up to date: %v\n", kind, err)
 	case stats.pending > 0:
-		fmt.Fprintf(os.Stderr, "note: %d files here are not in the %s index or have changed, too many to index in passing; run \"chainsaw index .\" (results may be incomplete)\n", stats.pending, kind)
+		fmt.Fprintf(os.Stderr, "note: %d files here are not in the %s index or have changed, too many to index in passing; run \"motorsaw index .\" (results may be incomplete)\n", stats.pending, kind)
 	case stats.indexed > 0 || stats.removed > 0 || stats.failed > 0:
 		fmt.Fprintf(os.Stderr, "note: %s index updated in %v: %d files indexed", kind, time.Since(start).Round(time.Millisecond), stats.indexed)
 		if stats.removed > 0 {

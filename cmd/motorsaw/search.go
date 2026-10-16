@@ -7,20 +7,20 @@ import (
 	"os"
 	"strings"
 
-	"github.com/wouteroostervld/chainsaw/pkg/config"
-	"github.com/wouteroostervld/chainsaw/pkg/embed"
-	"github.com/wouteroostervld/chainsaw/pkg/view"
+	"github.com/wouteroostervld/motorsaw/pkg/config"
+	"github.com/wouteroostervld/motorsaw/pkg/embed"
+	"github.com/wouteroostervld/motorsaw/pkg/view"
 )
 
-const searchUsage = `Usage: chainsaw search [options] <words>...
+const searchUsage = `Usage: motorsaw search [options] <words>...
 
 Searches by meaning: finds the definitions and sections whose content is
 closest to what you describe, whatever words they use. Results are limited
 to the current directory unless --all is given.
 
 This uses the embeddings index, which is off by default and needs a model;
-"chainsaw status" shows whether it is on here. To find a name or a string,
-"chainsaw grep" is exact and needs nothing.
+"motorsaw status" shows whether it is on here. To find a name or a string,
+"motorsaw grep" is exact and needs nothing.
 
 Options:
   --all            Do not limit results to the current directory
@@ -39,8 +39,8 @@ Before a search runs, source files under the current directory that are new
 or modified are embedded, when embeddings are switched on for them.
 
 Examples:
-  chainsaw search "where are retries handled"
-  chainsaw search --expand body --limit 3 parse a config file`
+  motorsaw search "where are retries handled"
+  motorsaw search --expand body --limit 3 parse a config file`
 
 // autoEmbedLimit is the most files a search will embed by itself. Each one is
 // a request to a model, so the limit is far lower than for parsing.
@@ -100,7 +100,7 @@ func handleSearch(args []string) {
 		fail("%v", err)
 	}
 	if have != "" && have != client.Model() {
-		fail("the index holds embeddings made with %s, and %s is configured; run \"chainsaw index .\" to make them again", have, client.Model())
+		fail("the index holds embeddings made with %s, and %s is configured; run \"motorsaw index .\" to make them again", have, client.Model())
 	}
 
 	root := cwd

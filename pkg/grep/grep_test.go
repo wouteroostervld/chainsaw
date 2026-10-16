@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/wouteroostervld/chainsaw/pkg/chunker"
+	"github.com/wouteroostervld/motorsaw/pkg/chunker"
 )
 
 const goSource = `package store

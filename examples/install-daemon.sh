@@ -1,21 +1,21 @@
 #!/bin/bash
-# Chainsaw Daemon Installation Script
-# This script installs chainsawd as a systemd user service
+# Motorsaw Daemon Installation Script
+# This script installs motorsawd as a systemd user service
 
 set -e
 
-BINARY_NAME="chainsawd"
-SERVICE_NAME="chainsawd.service"
+BINARY_NAME="motorsawd"
+SERVICE_NAME="motorsawd.service"
 INSTALL_DIR="$HOME/.local/bin"
 SERVICE_DIR="$HOME/.config/systemd/user"
 
-echo "=== Chainsaw Daemon Installer ==="
+echo "=== Motorsaw Daemon Installer ==="
 echo
 
 # Check if binary exists
 if [ ! -f "$BINARY_NAME" ]; then
     echo "Error: $BINARY_NAME binary not found in current directory"
-    echo "Please build it first with: go build -o chainsawd ./cmd/chainsawd"
+    echo "Please build it first with: go build -o motorsawd ./cmd/motorsawd"
     exit 1
 fi
 
@@ -23,7 +23,7 @@ fi
 echo "Creating directories..."
 mkdir -p "$INSTALL_DIR"
 mkdir -p "$SERVICE_DIR"
-mkdir -p "$HOME/.chainsaw"
+mkdir -p "$HOME/.motorsaw"
 
 # Install binary
 echo "Installing $BINARY_NAME to $INSTALL_DIR..."
@@ -43,13 +43,13 @@ fi
 echo "Installing systemd service..."
 cat > "$SERVICE_DIR/$SERVICE_NAME" << 'EOF'
 [Unit]
-Description=Chainsaw GraphRAG Indexing Daemon
-Documentation=https://github.com/wouteroostervld/chainsaw
+Description=Motorsaw GraphRAG Indexing Daemon
+Documentation=https://github.com/wouteroostervld/motorsaw
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/chainsawd
+ExecStart=%h/.local/bin/motorsawd
 Restart=on-failure
 RestartSec=5s
 
@@ -70,12 +70,12 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.chainsaw
+ReadWritePaths=%h/.motorsaw
 
 # Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=chainsawd
+SyslogIdentifier=motorsawd
 
 [Install]
 WantedBy=default.target
@@ -89,7 +89,7 @@ echo
 echo "=== Installation Complete! ==="
 echo
 echo "Next steps:"
-echo "  1. Create config: mkdir -p ~/.chainsaw && vi ~/.chainsaw/config.yaml"
+echo "  1. Create config: mkdir -p ~/.motorsaw && vi ~/.motorsaw/config.yaml"
 echo "     (See examples/global-config.yaml for reference)"
 echo
 echo "  2. Enable service: systemctl --user enable $SERVICE_NAME"

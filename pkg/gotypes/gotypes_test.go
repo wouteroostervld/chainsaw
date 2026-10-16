@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/wouteroostervld/chainsaw/pkg/chunker"
+	"github.com/wouteroostervld/motorsaw/pkg/chunker"
 )
 
 const storeSource = `package store

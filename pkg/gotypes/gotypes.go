@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/wouteroostervld/chainsaw/pkg/chunker"
+	"github.com/wouteroostervld/motorsaw/pkg/chunker"
 )
 
 // Relation types added on top of those the chunker reports

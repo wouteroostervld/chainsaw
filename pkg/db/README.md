@@ -1,6 +1,6 @@
 # pkg/db
 
-The index: one SQLite file, `~/.chainsaw/graph.db`. It holds names,
+The index: one SQLite file, `~/.motorsaw/graph.db`. It holds names,
 locations, edges and, when the embeddings index is on, vectors. It holds no
 source text; code is read from the files when a query asks for it. The index
 can be deleted at any time and is built again from the source.

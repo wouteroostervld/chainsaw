@@ -47,14 +47,14 @@ func NewDefaultLoader() *Loader {
 	return &Loader{fs: &RealFileSystem{}}
 }
 
-// LoadGlobal loads the global configuration from ~/.chainsaw/config.yaml
+// LoadGlobal loads the global configuration from ~/.motorsaw/config.yaml
 func (l *Loader) LoadGlobal() (*GlobalConfig, error) {
 	home, err := l.fs.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
 
-	return l.LoadGlobalFromPath(home + "/.chainsaw/config.yaml")
+	return l.LoadGlobalFromPath(home + "/.motorsaw/config.yaml")
 }
 
 // LoadGlobalFromPath loads global config from a specific path

@@ -1,13 +1,13 @@
-# Chainsaw Examples
+# Motorsaw Examples
 
-This directory contains example configurations and installation helpers for Chainsaw.
+This directory contains example configurations and installation helpers for Motorsaw.
 
 ## Files
 
 ### Configuration Examples
 
 #### `global-config.yaml`
-Complete example of a global configuration file that goes in `~/.chainsaw/config.yaml`.
+Complete example of a global configuration file that goes in `~/.motorsaw/config.yaml`.
 
 Includes:
 - Two profile examples (`coding_heavy` and `notes_fast`)
@@ -27,7 +27,7 @@ Use cases:
 ### Skills and Guidelines
 
 #### `SKILLS.md`
-Project-specific coding guidelines that Chainsaw can inject into context.
+Project-specific coding guidelines that Motorsaw can inject into context.
 
 Includes:
 - Coding standards (Go style, architecture patterns)
@@ -40,13 +40,13 @@ Includes:
 
 **Usage:**
 - Place in project root: `./SKILLS.md`
-- Or in global skills directory: `~/.chainsaw/skills/SKILLS.md`
-- Chainsaw will automatically include this when providing context
+- Or in global skills directory: `~/.motorsaw/skills/SKILLS.md`
+- Motorsaw will automatically include this when providing context
 
 ### Daemon Setup
 
-#### `chainsawd.service`
-Systemd user service unit file for running Chainsaw daemon.
+#### `motorsawd.service`
+Systemd user service unit file for running Motorsaw daemon.
 
 Features:
 - Automatic restart on failure
@@ -57,20 +57,20 @@ Features:
 
 **Manual installation:**
 ```bash
-cp chainsawd.service ~/.config/systemd/user/
+cp motorsawd.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable chainsawd.service
-systemctl --user start chainsawd.service
+systemctl --user enable motorsawd.service
+systemctl --user start motorsawd.service
 ```
 
 #### `install-daemon.sh`
-Automated installation script for the Chainsaw daemon.
+Automated installation script for the Motorsaw daemon.
 
 **Usage:**
 ```bash
 # Build the daemon first
-cd /path/to/chainsaw
-go build -o chainsawd ./cmd/chainsawd
+cd /path/to/motorsaw
+go build -o motorsawd ./cmd/motorsawd
 
 # Run installer from examples directory
 cd examples
@@ -78,9 +78,9 @@ cd examples
 ```
 
 The script will:
-1. Copy binary to `~/.local/bin/chainsawd`
+1. Copy binary to `~/.local/bin/motorsawd`
 2. Install systemd user service
-3. Create `~/.chainsaw` directory
+3. Create `~/.motorsaw` directory
 4. Provide next steps for configuration
 
 ## Quick Start
@@ -95,8 +95,8 @@ Make sure you have:
 ### 2. Configure Global Settings
 
 ```bash
-mkdir -p ~/.chainsaw
-cp global-config.yaml ~/.chainsaw/config.yaml
+mkdir -p ~/.motorsaw
+cp global-config.yaml ~/.motorsaw/config.yaml
 # Edit config.yaml to set your include paths and profiles
 ```
 
@@ -104,25 +104,25 @@ cp global-config.yaml ~/.chainsaw/config.yaml
 
 ```bash
 # Build
-go build -o chainsawd ./cmd/chainsawd
+go build -o motorsawd ./cmd/motorsawd
 
 # Install
 cd examples
 ./install-daemon.sh
 
 # Enable and start
-systemctl --user enable chainsawd.service
-systemctl --user start chainsawd.service
+systemctl --user enable motorsawd.service
+systemctl --user start motorsawd.service
 
 # Check status
-systemctl --user status chainsawd.service
+systemctl --user status motorsawd.service
 ```
 
 ### 4. Add Project-Local Config (Optional)
 
 ```bash
 cd /path/to/your/project
-cp /path/to/chainsaw/examples/local-config.yaml ./.config.yaml
+cp /path/to/motorsaw/examples/local-config.yaml ./.config.yaml
 # Edit .config.yaml to add project-specific paths
 ```
 
@@ -130,7 +130,7 @@ cp /path/to/chainsaw/examples/local-config.yaml ./.config.yaml
 
 ```bash
 cd /path/to/your/project
-cp /path/to/chainsaw/examples/SKILLS.md ./SKILLS.md
+cp /path/to/motorsaw/examples/SKILLS.md ./SKILLS.md
 # Edit SKILLS.md with your project's guidelines
 ```
 
@@ -169,30 +169,30 @@ cp /path/to/chainsaw/examples/SKILLS.md ./SKILLS.md
 
 ```bash
 # Check logs
-journalctl --user -u chainsawd.service -n 50
+journalctl --user -u motorsawd.service -n 50
 
 # Check config syntax
-chainsawd --validate-config
+motorsawd --validate-config
 
 # Test manually
-chainsawd --debug
+motorsawd --debug
 ```
 
 ### Config not found
 
 ```bash
 # Verify config location
-ls -la ~/.chainsaw/config.yaml
+ls -la ~/.motorsaw/config.yaml
 
 # Check config syntax
-cat ~/.chainsaw/config.yaml | yq eval '.'
+cat ~/.motorsaw/config.yaml | yq eval '.'
 ```
 
 ### Local config not applying
 
 ```bash
 # Check config discovery
-chainsaw config show  # Will show merged config
+motorsaw config show  # Will show merged config
 
 # Verify you're in the right directory
 pwd

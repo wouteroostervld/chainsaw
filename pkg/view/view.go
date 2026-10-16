@@ -15,8 +15,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/wouteroostervld/chainsaw/pkg/chunker"
-	"github.com/wouteroostervld/chainsaw/pkg/db"
+	"github.com/wouteroostervld/motorsaw/pkg/chunker"
+	"github.com/wouteroostervld/motorsaw/pkg/db"
 )
 
 // Mode selects how much context is shown around a hit

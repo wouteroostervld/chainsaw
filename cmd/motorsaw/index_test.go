@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wouteroostervld/chainsaw/pkg/db"
-	"github.com/wouteroostervld/chainsaw/pkg/indexer"
+	"github.com/wouteroostervld/motorsaw/pkg/db"
+	"github.com/wouteroostervld/motorsaw/pkg/indexer"
 )
 
 // project writes a small source tree and returns its directory and an index
@@ -215,7 +215,7 @@ func embeddingServer(t *testing.T, texts *int) *httptest.Server {
 // configure writes the user's configuration; project must have been called
 func configure(t *testing.T, content string) {
 	t.Helper()
-	dir := filepath.Join(os.Getenv("HOME"), ".chainsaw")
+	dir := filepath.Join(os.Getenv("HOME"), ".motorsaw")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestSyncIndex_ModelAway(t *testing.T) {
 
 func TestLoadSettings_BrokenConfiguration(t *testing.T) {
 	project(t)
-	dir := filepath.Join(os.Getenv("HOME"), ".chainsaw")
+	dir := filepath.Join(os.Getenv("HOME"), ".motorsaw")
 	os.MkdirAll(dir, 0700)
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("profiles: [not, a, map\n"), 0600); err != nil {
 		t.Fatal(err)

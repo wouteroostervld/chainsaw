@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/wouteroostervld/chainsaw/pkg/config"
-	"github.com/wouteroostervld/chainsaw/pkg/db"
+	"github.com/wouteroostervld/motorsaw/pkg/config"
+	"github.com/wouteroostervld/motorsaw/pkg/db"
 )
 
 func handleStatus() {
@@ -19,7 +19,7 @@ func handleStatus() {
 	statusCounts, _ := database.CountFilesByStatus()
 	version, _ := database.GetMeta("schema_version")
 
-	fmt.Println("Chainsaw Status")
+	fmt.Println("Motorsaw Status")
 	fmt.Println("===============")
 	fmt.Printf("Index:        %s (schema %s)\n\n", database.Path(), version)
 
@@ -81,7 +81,7 @@ func printKinds(database *db.DB) {
 	case model != "":
 		fmt.Printf("  embeddings made with %s: %d chunks, vectors of length %d\n", model, chunks, dim)
 		if configured != "" && configured != model {
-			fmt.Printf("  %s is configured now; \"chainsaw index\" will make them again\n", configured)
+			fmt.Printf("  %s is configured now; \"motorsaw index\" will make them again\n", configured)
 		}
 	case configured != "":
 		fmt.Printf("  embedding model: %s\n", configured)

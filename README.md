@@ -1,8 +1,8 @@
-# 🪚 Chainsaw
+# 🪚 Motorsaw
 
 **A code graph and context-aware search for your codebase, built from the syntax tree**
 
-Chainsaw parses your source files and answers three kinds of question
+Motorsaw parses your source files and answers three kinds of question
 without reading whole files: *where is this text, and what is it inside of*,
 *what does this file look like*, and *what calls what*. That needs no
 embeddings, no model and no GPU: indexing is parsing, and takes seconds for
@@ -22,19 +22,19 @@ older version is built again, or has to be removed.
 
 ```bash
 # Search with a regular expression (PCRE); each match shows the definition it is in
-chainsaw grep 'IS_EXT2_SB' fs/ext4
+motorsaw grep 'IS_EXT2_SB' fs/ext4
 
 # Search the syntax tree with a tree-sitter query; here, only in signatures
-chainsaw match --signature '((identifier) @p (#eq? @p "ctx"))'
+motorsaw match --signature '((identifier) @p (#eq? @p "ctx"))'
 
 # A file folded to its signatures, each with the lines of its body
-chainsaw outline pkg/indexer/indexer.go
+motorsaw outline pkg/indexer/indexer.go
 
 # The code graph: who calls this, what implements that
-chainsaw query 'MATCH (f)-[:calls]->(t {name: "Open"}) RETURN f.name, f.file, f.lines'
+motorsaw query 'MATCH (f)-[:calls]->(t {name: "Open"}) RETURN f.name, f.file, f.lines'
 
 # Search by meaning (off by default, see below)
-chainsaw search "where are retries handled"
+motorsaw search "where are retries handled"
 ```
 
 `grep`, `match` and `outline` work on the files as they are on disk and need
@@ -44,13 +44,13 @@ current directory is indexed, so there is nothing to set up and results are
 never stale. For a very large tree, index it once by hand:
 
 ```bash
-chainsaw index .          # parse the source files under a path
+motorsaw index .          # parse the source files under a path
 ```
 
 ### What a result looks like
 
 ```
-$ chainsaw grep -s 'IS_EXT[23]_SB' fs/ext4
+$ motorsaw grep -s 'IS_EXT[23]_SB' fs/ext4
 fs/ext4/super.c
   (outside any definition): 3
   FUNCTION ext4_check_opt_consistency  (lines 2773-2853): 2
@@ -78,7 +78,7 @@ switched on or off, for everything or for one project:
 | `embeddings` | A vector per chunk of code, from a model | `search` | **off** |
 
 Embeddings cost a request to a model for every file, so they stay off until
-you say so and name a model in `~/.chainsaw/config.yaml`:
+you say so and name a model in `~/.motorsaw/config.yaml`:
 
 ```yaml
 profiles:
@@ -109,7 +109,7 @@ boundary a call of `get` would be linked to everything of that name in every
 tree you ever indexed.
 
 Where references may lead outside a project is yours to say, with `follow:`
-in `~/.chainsaw/config.yaml` or in the `.config.yaml` of a project:
+in `~/.motorsaw/config.yaml` or in the `.config.yaml` of a project:
 
 ```yaml
 follow:
@@ -120,7 +120,7 @@ follow:
 ```
 
 Only what is named through an import, or placed by the Go type checker, is
-followed, and only into what is in the index: `chainsaw index .venv` puts a
+followed, and only into what is in the index: `motorsaw index .venv` puts a
 library there. See [The graph](MANUAL.md#the-graph) in the manual.
 
 ## Languages
@@ -145,8 +145,8 @@ upper case. Square brackets are parentheses, as in the TRIPOS compiler
 ## Installation
 
 ```bash
-git clone https://github.com/wouteroostervld/chainsaw.git
-cd chainsaw
+git clone https://github.com/wouteroostervld/motorsaw.git
+cd motorsaw
 make install
 ```
 
@@ -159,23 +159,23 @@ dependencies.
 ## Documentation
 
 - **[Manual](MANUAL.md)**: commands, the query language, the graph, configuration
-- **[Agent skill](share/skills/chainsaw/SKILL.md)**: how an AI coding agent should use it
+- **[Agent skill](share/skills/motorsaw/SKILL.md)**: how an AI coding agent should use it
 
 ## How it works
 
 ```
-source files ── tree-sitter ─┬► definitions, calls, imports ──► graph ─────────────► chainsaw query
+source files ── tree-sitter ─┬► definitions, calls, imports ──► graph ─────────────► motorsaw query
       │       (+ go/types    │
-      │         for Go)      └► chunks ── model ──► embeddings (optional) ──► chainsaw search
+      │         for Go)      └► chunks ── model ──► embeddings (optional) ──► motorsaw search
       │
-      └─────────────────────────────────────────────────────────────────────► chainsaw grep / match / outline
+      └─────────────────────────────────────────────────────────────────────► motorsaw grep / match / outline
 ```
 
-The index lives in `~/.chainsaw/graph.db`. It holds names, locations, edges
+The index lives in `~/.motorsaw/graph.db`. It holds names, locations, edges
 and, when switched on, vectors. It holds no source text, and can be deleted
 at any time.
 
-A daemon is optional: `chainsaw daemon start` watches the directories you
+A daemon is optional: `motorsaw daemon start` watches the directories you
 configured and indexes what changes, so that a query finds the index up to
 date already. See [The index](MANUAL.md#the-index) in the manual.
 

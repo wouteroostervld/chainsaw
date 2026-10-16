@@ -1,13 +1,13 @@
-# Chainsaw Daemon - Systemd User Service Unit
+# Motorsaw Daemon - Systemd User Service Unit
 
 [Unit]
-Description=Chainsaw GraphRAG Indexing Daemon
-Documentation=https://github.com/wouteroostervld/chainsaw
+Description=Motorsaw GraphRAG Indexing Daemon
+Documentation=https://github.com/wouteroostervld/motorsaw
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/chainsaw daemon start
+ExecStart=%h/.local/bin/motorsaw daemon start
 Restart=on-failure
 RestartSec=5s
 
@@ -33,12 +33,12 @@ PrivateTmp=true
 # Restrict filesystem access to home directory only
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.chainsaw
+ReadWritePaths=%h/.motorsaw
 
 # Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=chainsawd
+SyslogIdentifier=motorsawd
 
 [Install]
 WantedBy=default.target

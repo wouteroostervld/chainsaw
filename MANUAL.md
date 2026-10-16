@@ -1,6 +1,6 @@
-# Chainsaw Manual
+# Motorsaw Manual
 
-Chainsaw looks at code through its syntax tree. It has four ways of looking,
+Motorsaw looks at code through its syntax tree. It has four ways of looking,
 `grep`, `match`, `outline` and `query`, and one way of showing what it found
 in more or less context, `--expand`. A fifth way of looking, `search`, finds
 code by what it means; it needs a model and is off until you switch it on.
@@ -23,9 +23,9 @@ code by what it means; it needs a model and is off until you switch it on.
 ## Installation
 
 ```bash
-git clone https://github.com/wouteroostervld/chainsaw.git
-cd chainsaw
-make install          # builds to ~/.local/bin/chainsaw
+git clone https://github.com/wouteroostervld/motorsaw.git
+cd motorsaw
+make install          # builds to ~/.local/bin/motorsaw
 ```
 
 Needs Go 1.24.7+, a C compiler and the PCRE2 development files
@@ -37,7 +37,7 @@ needs by itself.
 ## grep
 
 ```bash
-chainsaw grep [options] <pattern> [path...]
+motorsaw grep [options] <pattern> [path...]
 ```
 
 Searches files with a Perl-compatible regular expression (PCRE2: lookaround,
@@ -45,7 +45,7 @@ backreferences, `\b`, `(?i)`, and so on) and groups the matching lines by the
 definition they are in.
 
 ```
-$ chainsaw grep 'relation_type\s+(IN|=)' pkg/db
+$ motorsaw grep 'relation_type\s+(IN|=)' pkg/db
 pkg/db/chunks.go
   METHOD DB.Callees  (lines 95-123)
     102: JOIN graph_edges g ON g.source_entity_id = sd.entity_id AND g.relation_type = ?
@@ -84,7 +84,7 @@ to work through when something has to change everywhere.
 output with `head`, it still says how much there is:
 
 ```
-$ chainsaw grep -s --limit 3 'err' pkg/db
+$ motorsaw grep -s --limit 3 'err' pkg/db
 pkg/db/chunks.go
   METHOD DB.InsertChunk  (lines 5-20): 7
   METHOD DB.DeleteChunksForFile  (lines 22-48): 10
@@ -98,22 +98,22 @@ match, in the form editors and other tools read, and nothing else is written:
 the note that `--limit` stopped the list goes to standard error.
 
 ```
-$ chainsaw grep --oneline 'ForgetFile' cmd
-cmd/chainsaw/index.go:295: [syncIndex] if err := idx.ForgetFile(f.ID, path); err != nil {
-$ chainsaw grep -s --oneline 'ForgetFile' pkg/db/files.go
+$ motorsaw grep --oneline 'ForgetFile' cmd
+cmd/motorsaw/index.go:295: [syncIndex] if err := idx.ForgetFile(f.ID, path); err != nil {
+$ motorsaw grep -s --oneline 'ForgetFile' pkg/db/files.go
 pkg/db/files.go:104-117: [DB.ForgetFile] 2
 ```
 
 Options may stand before or after the pattern and the paths, here and in the
 other commands. Put `--` before a pattern that begins with a dash:
-`chainsaw grep -F -- '--limit'`.
+`motorsaw grep -F -- '--limit'`.
 
 `--signature` keeps only the matches that begin in the signature of a
 definition: in the definition, before its body. That is the same in every
 language, and tells what a function takes from what it does with it:
 
 ```
-$ chainsaw grep --signature 'context\.Context' pkg/indexer
+$ motorsaw grep --signature 'context\.Context' pkg/indexer
 pkg/indexer/embeddings.go
   METHOD Embedder.Embed  (lines 26-26)
     26: Embed(ctx context.Context, texts []string) ([][]float32, error)
@@ -127,8 +127,8 @@ number of parameters), use `match`.
 ## match
 
 ```bash
-chainsaw match [options] <query> [path...]
-chainsaw match --tree [--lines N-M] <file>
+motorsaw match [options] <query> [path...]
+motorsaw match --tree [--lines N-M] <file>
 ```
 
 Searches the syntax tree with a [tree-sitter query](https://tree-sitter.github.io/tree-sitter/using-parsers/queries/),
@@ -140,7 +140,7 @@ No index is needed.
 A query is a pattern of nodes, written as the tree is written:
 
 ```
-$ chainsaw match -s '(function_declaration result: (pointer_type) @r)' pkg/grep
+$ motorsaw match -s '(function_declaration result: (pointer_type) @r)' pkg/grep
 pkg/grep/grep.go
   FUNCTION matchFile  (lines 211-231): 1
 
@@ -173,7 +173,7 @@ from one language to the next. `--tree` shows the tree of a file as a query
 sees it, to write the query from:
 
 ```
-$ chainsaw match --tree --lines 213 pkg/grep/grep.go
+$ motorsaw match --tree --lines 213 pkg/grep/grep.go
 (source_file)  [1-279]
   (function_declaration)  [213-231]
     name: (identifier) matchFile  [213]
@@ -195,7 +195,7 @@ the same thing in the words of more than one grammar:
 
 ```bash
 # The names of functions, in Go and JavaScript and in Python and C
-chainsaw match '(function_declaration name: (_) @n) (function_definition name: (_) @n)'
+motorsaw match '(function_declaration name: (_) @n) (function_definition name: (_) @n)'
 ```
 
 It is an error only when no pattern fits any language; `--lang` holds a query
@@ -216,15 +216,15 @@ a definition as it likes (`result` in Go, `return_type` in Rust and Python,
 there are two ways to match on a signature.
 
 `--signature` is the one that is the same everywhere. It keeps the captures
-that begin in the signature of a definition as chainsaw knows it, the
+that begin in the signature of a definition as motorsaw knows it, the
 definition up to its body, whatever the grammar calls its parts:
 
 ```bash
 # Definitions with a parameter named ctx, in any language
-chainsaw match --signature '((identifier) @p (#eq? @p "ctx"))'
+motorsaw match --signature '((identifier) @p (#eq? @p "ctx"))'
 
 # Anything with a pointer in its signature: a pattern for Go and Rust, one for C and C++
-chainsaw match --signature -s '(pointer_type) @p (pointer_declarator) @p'
+motorsaw match --signature -s '(pointer_type) @p (pointer_declarator) @p'
 ```
 
 The other is to ask the grammar for the shape, which is exact but belongs to
@@ -232,24 +232,24 @@ one language:
 
 ```bash
 # Go methods that take a context and return only an error
-chainsaw match '(method_declaration
+motorsaw match '(method_declaration
     parameters: (parameter_list (parameter_declaration type: (_) @_t))
     result: (type_identifier) @_r
     (#eq? @_t "context.Context") (#eq? @_r "error")) @m'
 
 # BCPL functions of exactly four parameters
-chainsaw match '(function_definition parameters: (parameter_list
+motorsaw match '(function_definition parameters: (parameter_list
     . (parameter) . (parameter) . (parameter) . (parameter) .)) @f'
 
 # 68000: a jsr right after a movem
-chainsaw match '((instruction mnemonic: (_) @_a) . (instruction mnemonic: (_) @_b) @call
+motorsaw match '((instruction mnemonic: (_) @_a) . (instruction mnemonic: (_) @_b) @call
     (#eq? @_a "movem") (#eq? @_b "jsr"))'
 ```
 
 ## outline
 
 ```bash
-chainsaw outline [options] <file>...
+motorsaw outline [options] <file>...
 ```
 
 Prints a file folded to its skeleton. Every definition of five lines or more
@@ -277,8 +277,8 @@ functions. Markdown folds along its headings.
 the definition alone, under its file and lines:
 
 ````
-$ chainsaw outline --body cut cmd/chainsaw/output.go
-## cmd/chainsaw/output.go:71-79 cut
+$ motorsaw outline --body cut cmd/motorsaw/output.go
+## cmd/motorsaw/output.go:71-79 cut
 
 ```go
 // cut shortens a line to a number of characters; the last one is then an
@@ -296,7 +296,7 @@ them.
 ## query
 
 ```bash
-chainsaw query [options] '<cypher>'
+motorsaw query [options] '<cypher>'
 ```
 
 Queries the graph of definitions and how they relate, in a subset of Cypher.
@@ -382,20 +382,20 @@ total, and a value of several lines with `\n` between them. It is the form
 to hand to `sort`, `cut` or a loop in the shell.
 
 ```
-$ chainsaw query --oneline 'MATCH (f)-[:calls]->(t {name: "displayPath"}) RETURN f.name, f.lines'
+$ motorsaw query --oneline 'MATCH (f)-[:calls]->(t {name: "displayPath"}) RETURN f.name, f.lines'
 printMatches	185-204
 handleOutline	44-124
 ```
 
 By default a result must touch the current directory: at least one node of
-the matched path is defined under it. `chainsaw graph query` is accepted as
-an older spelling of `chainsaw query`.
+the matched path is defined under it. `motorsaw graph query` is accepted as
+an older spelling of `motorsaw query`.
 
 ## search
 
 ```bash
-chainsaw search "where are retries handled"
-chainsaw search --expand body --limit 3 parse a config file
+motorsaw search "where are retries handled"
+motorsaw search --expand body --limit 3 parse a config file
 ```
 
 Finds the definitions and sections whose content is closest in meaning to
@@ -408,7 +408,7 @@ and needs nothing.
 configured it says so and stops.
 
 ```
-$ chainsaw search --limit 2 "send a request to the model and read the vectors"
+$ motorsaw search --limit 2 "send a request to the model and read the vectors"
 search: "send a request to the model and read the vectors"
 results:
   - file: pkg/embed/embed.go
@@ -437,7 +437,7 @@ its signatures.
 
 Before a search runs, files under the current directory that are new or
 modified are embedded, when embeddings are on for them. More than 100 files
-are left for `chainsaw index .`, since every file is a request to the model.
+are left for `motorsaw index .`, since every file is a request to the model.
 
 ## Showing code: --expand
 
@@ -451,8 +451,8 @@ in one of three amounts:
 | `calls` | As `file`, and also what those definitions call: in place when it is in the same file, after it when it is in another. Uses the index, and follows `calls` edges only. |
 
 ```bash
-chainsaw grep --expand body 'filepath\.SkipDir' cmd
-chainsaw query --expand file 'MATCH (f)-[:calls]->(t {name: "nearest"}) RETURN f'
+motorsaw grep --expand body 'filepath\.SkipDir' cmd
+motorsaw query --expand file 'MATCH (f)-[:calls]->(t {name: "nearest"}) RETURN f'
 ```
 
 `body` is the smallest and usually enough. `file` shows where the code sits.
@@ -461,18 +461,18 @@ chainsaw query --expand file 'MATCH (f)-[:calls]->(t {name: "nearest"}) RETURN f
 ## The index
 
 ```bash
-chainsaw index <path>...      # parse and record files, or the files under directories
-chainsaw index --force <path> # also files that have not changed
-chainsaw index --only graph . # one kind of index only (graph, embeddings)
-chainsaw status               # what is in the index
-chainsaw daemon start         # watch the configured directories for changes
+motorsaw index <path>...      # parse and record files, or the files under directories
+motorsaw index --force <path> # also files that have not changed
+motorsaw index --only graph . # one kind of index only (graph, embeddings)
+motorsaw status               # what is in the index
+motorsaw daemon start         # watch the configured directories for changes
 ```
 
-**You rarely need any of these.** Before `chainsaw query` runs, and before
+**You rarely need any of these.** Before `motorsaw query` runs, and before
 `--expand calls` looks up what is called, the source files under the current
 directory that are new or modified are indexed, and the index forgets files
 that are gone from disk (reported as `removed file detected: <file>`).
-Chainsaw never deletes or changes a source file.
+Motorsaw never deletes or changes a source file.
 A first query on a project that was never indexed just takes a moment longer
 (this repository: about two seconds) and says so on standard error. Results
 never come from stale files. `--no-index` skips the step.
@@ -480,18 +480,18 @@ never come from stale files. `--no-index` skips the step.
 A file counts as modified when its modification time differs from when it
 was indexed. When more than 1,000 files need indexing the step is skipped
 with a note, because it would take too long to do in passing; run
-`chainsaw index .` once for a tree that size.
+`motorsaw index .` once for a tree that size.
 
-`chainsaw index` does the same by hand, with no limit and for paths outside
+`motorsaw index` does the same by hand, with no limit and for paths outside
 the current directory. It takes seconds: the Linux kernel's `fs/ext4` (70,000
 lines) in about two. It accepts any number of files and directories, and
 reads more from standard input when given `-`, so it fits in a pipeline:
 
 ```bash
-chainsaw index pkg cmd/chainsaw/main.go
-git diff --name-only | chainsaw index -
-find . -name '*.go' -newer Makefile -print0 | xargs -0 chainsaw index
-find . -name '*.py' -print0 | chainsaw index -0 -
+motorsaw index pkg cmd/motorsaw/main.go
+git diff --name-only | motorsaw index -
+find . -name '*.go' -newer Makefile -print0 | xargs -0 motorsaw index
+find . -name '*.py' -print0 | motorsaw index -0 -
 ```
 
 A file named directly is indexed whatever the configuration excludes; one
@@ -502,7 +502,7 @@ indexed, and the exit status is 1.
 The daemon is optional as well. It watches the `include` directories of your
 configuration and re-indexes files as they change. Watching only shows what
 changes while it runs, so when it starts it first scans those directories as
-`chainsaw index` would: new and modified files are indexed, and the index
+`motorsaw index` would: new and modified files are indexed, and the index
 forgets files that are gone. The scan runs beside the watching and fills the
 graph only; it makes embeddings when you name them:
 
@@ -514,12 +514,12 @@ profiles:
       scan_kinds: [graph, embeddings]   # default: [graph]
 ```
 
-`chainsaw daemon start -scan=false` and `-scan-kinds graph,embeddings` do the
+`motorsaw daemon start -scan=false` and `-scan-kinds graph,embeddings` do the
 same for one run, and win over the configuration. A kind that is named is
 still only built where it is switched on. Files that change while the daemon
 runs are indexed in every kind that is on for them, whatever the scan does.
 
-The index is `~/.chainsaw/graph.db`. It holds names, locations, edges and,
+The index is `~/.motorsaw/graph.db`. It holds names, locations, edges and,
 when embeddings are on, vectors. It holds no source text: the code a query
 or a search shows (`snippet`, `--expand`) is read from the files when it is
 asked for. It can be deleted at any time.
@@ -538,7 +538,7 @@ the others.
 `grep`, `match` and `outline` use no index at all.
 
 **Switching a kind on or off** is done under `index:`, in the profile of
-`~/.chainsaw/config.yaml` for everything, or in a `.config.yaml` in a
+`~/.motorsaw/config.yaml` for everything, or in a `.config.yaml` in a
 directory for the files below it. The nearest `.config.yaml` above a file
 decides; a kind it does not mention keeps the setting of the profile.
 
@@ -555,7 +555,7 @@ index:
 ```
 
 **Embeddings need a model**, and that is only ever read from your own
-`~/.chainsaw/config.yaml`: a project can ask for embeddings, it cannot say
+`~/.motorsaw/config.yaml`: a project can ask for embeddings, it cannot say
 where your source is sent.
 
 ```yaml
@@ -575,11 +575,11 @@ profiles:
 `provider: ollama` or `provider: openai` says which protocol to speak when it
 does not follow from the rest (an `api_key` or an address ending in `/v1`
 means OpenAI). Naming a model switches nothing on; `index: {embeddings:
-true}` does. With embeddings on and no model, `chainsaw index` stops and
+true}` does. With embeddings on and no model, `motorsaw index` stops and
 says so, and `query` carries on as before.
 
 **The kinds are kept current separately.** A command brings up to date only
-the kind it uses, so `query` never waits for a model, and `chainsaw index`
+the kind it uses, so `query` never waits for a model, and `motorsaw index`
 does all that are on. Switching `embeddings` on later embeds the files
 without building the graph again; a model that is away leaves the graph
 built, and the embeddings are tried again next time. After three files in a
@@ -587,14 +587,14 @@ row that the model fails on, a run stops rather than repeat the error for
 every file.
 
 **Switching a kind off** for a file drops what that kind held of it, the next
-time `chainsaw index` or a command that uses that kind comes by. For
+time `motorsaw index` or a command that uses that kind comes by. For
 embeddings that is work thrown away, so switch them off where you mean it.
 
 **Changing the model** makes the stored vectors useless: vectors of two
-models cannot be compared. `chainsaw search` says so and stops; the next
-`chainsaw index` drops them and embeds again with the new model.
+models cannot be compared. `motorsaw search` says so and stops; the next
+`motorsaw index` drops them and embeds again with the new model.
 
-`chainsaw status` shows which kinds are on in the current directory, how
+`motorsaw status` shows which kinds are on in the current directory, how
 many files each holds, and which model the embeddings were made with.
 
 What is embedded is the same chunks the outline folds a file into: each
@@ -661,17 +661,17 @@ else the one that is active (`$VIRTUAL_ENV`). What is named through an
 import, or placed by the Go type checker, can then also lead to a definition
 in those directories. A match by name alone never leaves the project: a name
 like `get` is defined in every library. Following only says where references
-may lead; the library has to be in the index, which it is after `chainsaw
-index` on its directory (for example `chainsaw index .venv`). A change of
+may lead; the library has to be in the index, which it is after `motorsaw
+index` on its directory (for example `motorsaw index .venv`). A change of
 `follow` is picked up the next time a file of the project is indexed;
-`chainsaw index --force .` does that at once.
+`motorsaw index --force .` does that at once.
 
 A graph built from syntax cannot see calls made through reflection, or
-strings that name a function. `chainsaw grep` can.
+strings that name a function. `motorsaw grep` can.
 
 ## Configuration
 
-`~/.chainsaw/config.yaml` is optional. Chainsaw uses these settings of the
+`~/.motorsaw/config.yaml` is optional. Motorsaw uses these settings of the
 active profile:
 
 ```yaml
@@ -722,21 +722,21 @@ defaults would switch off what it switches on.
 
 **`query` returns nothing.** Results are limited to the current directory;
 try `--all`. If a note says there were too many files to index in passing,
-run `chainsaw index .` once.
+run `motorsaw index .` once.
 
 **`search` returns nothing.** The embeddings index is off unless you switched
-it on; `chainsaw status` shows whether it is on in this directory, and the
+it on; `motorsaw status` shows whether it is on in this directory, and the
 note under the empty result says how to switch it on.
 
 **`search` says the index holds embeddings made with another model.** Run
-`chainsaw index .` to make them again with the model that is configured now.
+`motorsaw index .` to make them again with the model that is configured now.
 
 **A call is missing from the graph.** In Go, check that the package compiles
 and that `go` is on the PATH. In other languages, a method call on a variable
 is a `may_call` edge, not `calls`. Ruby calls written without parentheses are
 not recognised.
 
-**The index is from another version.** Chainsaw says so and stops. Remove
-`~/.chainsaw/graph.db` and index again.
+**The index is from another version.** Motorsaw says so and stops. Remove
+`~/.motorsaw/graph.db` and index again.
 
-**Daemon logs.** `journalctl --user -u chainsawd -f`
+**Daemon logs.** `journalctl --user -u motorsawd -f`

@@ -112,7 +112,7 @@ profiles:
     blacklist: [".*\\.secret$"]
     whitelist: []
 `
-	mockFS.AddFile("/home/testuser/.chainsaw/config.yaml", []byte(globalConfig))
+	mockFS.AddFile("/home/testuser/.motorsaw/config.yaml", []byte(globalConfig))
 
 	// Add local config
 	localConfig := `
@@ -127,7 +127,7 @@ blacklist: [".*\\.tmp$"]
 	cachedLoader := NewCachedLoader(loader, cache)
 
 	// Load global config
-	global, err := loader.LoadGlobalFromPath("/home/testuser/.chainsaw/config.yaml")
+	global, err := loader.LoadGlobalFromPath("/home/testuser/.motorsaw/config.yaml")
 	if err != nil {
 		t.Fatalf("Failed to load global config: %v", err)
 	}
@@ -185,7 +185,7 @@ profiles:
     blacklist: []
     whitelist: []
 `
-	mockFS.AddFile("/home/testuser/.chainsaw/config.yaml", []byte(globalConfig))
+	mockFS.AddFile("/home/testuser/.motorsaw/config.yaml", []byte(globalConfig))
 
 	// Create loader and cached loader
 	loader := NewLoader(mockFS)
@@ -193,7 +193,7 @@ profiles:
 	cachedLoader := NewCachedLoader(loader, cache)
 
 	// Load global config
-	global, err := loader.LoadGlobalFromPath("/home/testuser/.chainsaw/config.yaml")
+	global, err := loader.LoadGlobalFromPath("/home/testuser/.motorsaw/config.yaml")
 	if err != nil {
 		t.Fatalf("Failed to load global config: %v", err)
 	}

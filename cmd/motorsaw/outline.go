@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wouteroostervld/chainsaw/pkg/chunker"
-	"github.com/wouteroostervld/chainsaw/pkg/view"
+	"github.com/wouteroostervld/motorsaw/pkg/chunker"
+	"github.com/wouteroostervld/motorsaw/pkg/view"
 )
 
-const outlineUsage = `Usage: chainsaw outline [options] <file>...
+const outlineUsage = `Usage: motorsaw outline [options] <file>...
 
 Shows a source file folded to its skeleton: every definition is reduced to
 its signature and the lines of its body. Works on the file as it is on disk;
@@ -30,10 +30,10 @@ Options:
 Options may stand before or after the files.
 
 Examples:
-  chainsaw outline pkg/indexer/indexer.go
-  chainsaw outline --expand Indexer.IndexFile pkg/indexer/indexer.go
-  chainsaw outline --body Indexer.IndexFile pkg/indexer/indexer.go
-  chainsaw outline --symbols pkg/db/*.go`
+  motorsaw outline pkg/indexer/indexer.go
+  motorsaw outline --expand Indexer.IndexFile pkg/indexer/indexer.go
+  motorsaw outline --body Indexer.IndexFile pkg/indexer/indexer.go
+  motorsaw outline --symbols pkg/db/*.go`
 
 // names collects a flag that may be repeated
 type names []string
@@ -72,7 +72,7 @@ func handleOutline(args []string) {
 		}
 		f, ok := chunker.Parse(path, content, 0)
 		if !ok {
-			fail("%s is not in a language chainsaw can parse", name)
+			fail("%s is not in a language motorsaw can parse", name)
 		}
 
 		for _, n := range body {

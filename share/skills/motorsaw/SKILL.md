@@ -1,36 +1,36 @@
 ---
-name: chainsaw
-description: Structural code search for a local codebase with the chainsaw CLI. Greps with the enclosing function or type shown for every match, folds a file to its signatures, and queries the call graph (who calls X, what does X call, what implements an interface). Use when locating code, finding usages or callers, getting to know a large file, or planning a rename, removal or refactor that must cover every use. Prefer it over plain grep and over reading whole files.
+name: motorsaw
+description: Structural code search for a local codebase with the motorsaw CLI. Greps with the enclosing function or type shown for every match, folds a file to its signatures, and queries the call graph (who calls X, what does X call, what implements an interface). Use when locating code, finding usages or callers, getting to know a large file, or planning a rename, removal or refactor that must cover every use. Prefer it over plain grep and over reading whole files.
 ---
 
-# Chainsaw
+# Motorsaw
 
-`chainsaw` looks at code through its syntax tree. Four commands, all
+`motorsaw` looks at code through its syntax tree. Four commands, all
 read-only, plus a fourth that only works where it is switched on:
 
 | Command | Answers | Needs the index |
 |---|---|---|
-| `chainsaw grep <pattern> [path...]` | Where is this text, and which definition is it inside? | No |
-| `chainsaw match <query> [path...]` | Which definitions have this shape (a parameter, a result type, a run of instructions)? | No |
-| `chainsaw outline <file>` | What is in this file, without reading it? | No |
-| `chainsaw query '<cypher>'` | Who calls this? What does it call? What implements it? | Yes, kept current automatically |
-| `chainsaw search <words>` | Where is the code that does this, when I have no name for it? | Yes, and off by default |
+| `motorsaw grep <pattern> [path...]` | Where is this text, and which definition is it inside? | No |
+| `motorsaw match <query> [path...]` | Which definitions have this shape (a parameter, a result type, a run of instructions)? | No |
+| `motorsaw outline <file>` | What is in this file, without reading it? | No |
+| `motorsaw query '<cypher>'` | Who calls this? What does it call? What implements it? | Yes, kept current automatically |
+| `motorsaw search <words>` | Where is the code that does this, when I have no name for it? | Yes, and off by default |
 
 Run them from inside the project. Parsed languages: Go, Python, JavaScript,
 TypeScript, Rust, Java, C, C++, Ruby, BCPL, Motorola 68000 assembly (a global
 label and the lines under it are one definition).
 
-If `chainsaw` is not on the PATH, say so and work with plain grep; do not
+If `motorsaw` is not on the PATH, say so and work with plain grep; do not
 install it yourself. It is built from
-<https://github.com/wouteroostervld/chainsaw> with `make install`.
+<https://github.com/wouteroostervld/motorsaw> with `make install`.
 
 ## grep: search, with the definition around each match
 
 ```bash
-chainsaw grep 'IS_EXT2_SB' fs/ext4        # matches grouped by enclosing definition
-chainsaw grep -s 'ctx\.Done\(\)'          # only the list of definitions, with counts
-chainsaw grep -i -w 'timeout' pkg         # -i ignore case, -w whole words, -F literal
-chainsaw grep -s --limit 40 'err' pkg     # the first 40, and how many there are in all
+motorsaw grep 'IS_EXT2_SB' fs/ext4        # matches grouped by enclosing definition
+motorsaw grep -s 'ctx\.Done\(\)'          # only the list of definitions, with counts
+motorsaw grep -i -w 'timeout' pkg         # -i ignore case, -w whole words, -F literal
+motorsaw grep -s --limit 40 'err' pkg     # the first 40, and how many there are in all
 ```
 
 ```
@@ -54,7 +54,7 @@ To search only what definitions declare, not what they do, add
 any language.
 
 ```bash
-chainsaw grep --signature -s 'context\.Context'   # what takes or returns a context
+motorsaw grep --signature -s 'context\.Context'   # what takes or returns a context
 ```
 
 ## match: search the syntax tree
@@ -64,10 +64,10 @@ give a tree-sitter query. Results look like those of `grep` and take the same
 options (`-s`, `--limit`, `--oneline`, `--expand`).
 
 ```bash
-chainsaw match --tree --lines 40-52 pkg/grep/grep.go    # the tree, to write a query from
-chainsaw match -s '(function_declaration result: (pointer_type) @r)'
-chainsaw match --signature '((identifier) @p (#eq? @p "ctx"))'   # in signatures, any language
-chainsaw match '(function_definition parameters: (parameter_list . (parameter) . (parameter) .)) @f'
+motorsaw match --tree --lines 40-52 pkg/grep/grep.go    # the tree, to write a query from
+motorsaw match -s '(function_declaration result: (pointer_type) @r)'
+motorsaw match --signature '((identifier) @p (#eq? @p "ctx"))'   # in signatures, any language
+motorsaw match '(function_definition parameters: (parameter_list . (parameter) . (parameter) .)) @f'
 ```
 
 - `(kind field: (kind))` is a node; `@name` reports it, `@_name` does not;
@@ -84,11 +84,11 @@ chainsaw match '(function_definition parameters: (parameter_list . (parameter) .
 ## outline: a file folded to its signatures
 
 ```bash
-chainsaw outline pkg/indexer/indexer.go
-chainsaw outline --expand Indexer.IndexFile pkg/indexer/indexer.go   # one definition in full
-chainsaw outline --body Indexer.IndexFile pkg/indexer/indexer.go     # that definition and nothing else
-chainsaw outline --symbols pkg/indexer/indexer.go                    # type, name, lines, signature
-chainsaw outline pkg/db/files.go pkg/db/chunks.go                    # several files, each under its name
+motorsaw outline pkg/indexer/indexer.go
+motorsaw outline --expand Indexer.IndexFile pkg/indexer/indexer.go   # one definition in full
+motorsaw outline --body Indexer.IndexFile pkg/indexer/indexer.go     # that definition and nothing else
+motorsaw outline --symbols pkg/indexer/indexer.go                    # type, name, lines, signature
+motorsaw outline pkg/db/files.go pkg/db/chunks.go                    # several files, each under its name
 ```
 
 ```go
@@ -107,19 +107,19 @@ with its file and lines.
 
 ```bash
 # Who calls a function
-chainsaw query 'MATCH (f)-[:calls]->(t) WHERE t.name = "ext4_orphan_add" RETURN f.name, f.file, f.lines'
+motorsaw query 'MATCH (f)-[:calls]->(t) WHERE t.name = "ext4_orphan_add" RETURN f.name, f.file, f.lines'
 
 # What a function calls, up to three levels deep
-chainsaw query 'MATCH (a {name: "handleIndex"})-[:calls*1..3]->(b) RETURN b.name, b.file, b.lines'
+motorsaw query 'MATCH (a {name: "handleIndex"})-[:calls*1..3]->(b) RETURN b.name, b.file, b.lines'
 
 # Everything that can reach a method, including through an interface
-chainsaw query 'MATCH (f)-[:calls|may_call]->(t) WHERE t.name ENDS WITH ".StoreFileSymbols" RETURN f.name, t.name'
+motorsaw query 'MATCH (f)-[:calls|may_call]->(t) WHERE t.name ENDS WITH ".StoreFileSymbols" RETURN f.name, t.name'
 
 # What implements an interface
-chainsaw query 'MATCH (s)-[:implements]->(i {name: "Database"}) RETURN s.name, s.file'
+motorsaw query 'MATCH (s)-[:implements]->(i {name: "Database"}) RETURN s.name, s.file'
 
 # Definitions by name or place
-chainsaw query 'MATCH (n:FUNCTION|METHOD) WHERE n.name =~ "^handle" RETURN n.signature, n.file, n.lines'
+motorsaw query 'MATCH (n:FUNCTION|METHOD) WHERE n.name =~ "^handle" RETURN n.signature, n.file, n.lines'
 ```
 
 - **Nodes** `(v:LABEL {name: "x"})`. Labels: `FUNCTION METHOD CLASS STRUCT
@@ -136,7 +136,7 @@ chainsaw query 'MATCH (n:FUNCTION|METHOD) WHERE n.name =~ "^handle" RETURN n.sig
   `ORDER BY ... DESC`, `SKIP`, `LIMIT`.
 
 Results are limited to the current directory; add `--all` to lift that.
-`chainsaw query --help` has the whole grammar.
+`motorsaw query --help` has the whole grammar.
 
 `calls` is certain. `may_call` means "may end up there": in Go, a call
 through an interface, to each implementing type; in other languages, a method
@@ -147,15 +147,15 @@ call through an interface points at the interface's method
 
 The index needs no care: before a query runs, files under the current
 directory that are new or changed are indexed. Only if a note says there were
-too many files to index in passing, run `chainsaw index .` once.
+too many files to index in passing, run `motorsaw index .` once.
 
 ## --expand: show the code
 
 Add to `grep`, `query` or `search` to see code instead of only locations:
 
 ```bash
-chainsaw grep --expand body 'SkipDir' cmd
-chainsaw query --expand body 'MATCH (f)-[:calls]->(t {name: "nearest"}) RETURN f'
+motorsaw grep --expand body 'SkipDir' cmd
+motorsaw query --expand body 'MATCH (f)-[:calls]->(t {name: "nearest"}) RETURN f'
 ```
 
 | | |
@@ -171,12 +171,12 @@ or after the pattern, query or file.
 
 | Instead of | Use |
 |---|---|
-| `chainsaw grep ... \| head -40` | `--limit 40`: the total is still given |
+| `motorsaw grep ... \| head -40` | `--limit 40`: the total is still given |
 | `... \| cut -c1-160` | `--width 160`, on `grep`, `outline`, `query` and `search` |
 | `outline --expand X f \| sed -n '/X/,/^}/p'` | `outline --body X f` |
 | `query ... \| grep name \| sed ...` | `query --oneline`: one row a line, values separated by tabs |
 | `search ... \| grep File` | `search --oneline`: `path:lines`, distance, name |
-| `for f in ...; do chainsaw outline $f; done` | `chainsaw outline a.go b.go` |
+| `for f in ...; do motorsaw outline $f; done` | `motorsaw outline a.go b.go` |
 
 `grep --oneline` writes `path:line: [definition] text`, and with `-s`
 `path:start-end: [definition] count`: one match a line, for `sort`, `wc -l`
@@ -184,10 +184,10 @@ or a further filter.
 
 ## Which to use
 
-- **"Where is X used?"** `chainsaw grep -s 'X'`: every use, grouped by definition.
-- **"Change X everywhere."** `chainsaw grep 'X'` for the complete list. Never rely on the graph alone for completeness: it does not see strings, comments, macros or reflection.
-- **"Which functions take or return X?"** `chainsaw grep --signature -s 'X'`; for an exact shape, `chainsaw match`.
-- **"What does this file do?"** `chainsaw outline <file>`.
-- **"Who calls X?" / "What does X reach?"** `chainsaw query`, then `--expand body` to read the callers.
-- **"What implements this interface?"** `chainsaw query` with `[:implements]`.
-- **You only have a description and no name.** Try `chainsaw search --expand body "<description>"`. It works only where the user switched on the embeddings index (`chainsaw status` says `embeddings: on here`). If it reports that no model is configured, or returns nothing with a note that embeddings are off, do not switch them on yourself: it costs the user model requests. Guess identifiers with `grep -i`, or outline the likely files.
+- **"Where is X used?"** `motorsaw grep -s 'X'`: every use, grouped by definition.
+- **"Change X everywhere."** `motorsaw grep 'X'` for the complete list. Never rely on the graph alone for completeness: it does not see strings, comments, macros or reflection.
+- **"Which functions take or return X?"** `motorsaw grep --signature -s 'X'`; for an exact shape, `motorsaw match`.
+- **"What does this file do?"** `motorsaw outline <file>`.
+- **"Who calls X?" / "What does X reach?"** `motorsaw query`, then `--expand body` to read the callers.
+- **"What implements this interface?"** `motorsaw query` with `[:implements]`.
+- **You only have a description and no name.** Try `motorsaw search --expand body "<description>"`. It works only where the user switched on the embeddings index (`motorsaw status` says `embeddings: on here`). If it reports that no model is configured, or returns nothing with a note that embeddings are off, do not switch them on yourself: it costs the user model requests. Guess identifiers with `grep -i`, or outline the likely files.

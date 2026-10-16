@@ -1,4 +1,4 @@
-# Chainsaw Developer Documentation
+# Motorsaw Developer Documentation
 
 **Version:** 2.1  
 **Last Updated:** 2024
@@ -29,8 +29,8 @@
 
 ```bash
 # Clone and initialize
-git clone https://github.com/wouteroostervld/chainsaw.git
-cd chainsaw
+git clone https://github.com/wouteroostervld/motorsaw.git
+cd motorsaw
 go mod download
 
 # Build and install
@@ -50,13 +50,13 @@ make dev
 
 # Or manual steps
 make install
-systemctl --user restart chainsawd
+systemctl --user restart motorsawd
 
 # Run tests
 make test
 
 # View daemon logs
-journalctl --user -u chainsawd -f
+journalctl --user -u motorsawd -f
 ```
 
 ### Development Commands
@@ -65,7 +65,7 @@ journalctl --user -u chainsawd -f
 |---------|-------------|
 | `make install` | Build and install to `~/.local/bin` |
 | `make update` | Alias for install (update existing) |
-| `make build` | Build locally (creates `./chainsaw`) |
+| `make build` | Build locally (creates `./motorsaw`) |
 | `make daemon-install` | Install daemon systemd service |
 | `make daemon-restart` | Restart daemon with new binary |
 | `make dev` | Build + restart daemon (quick dev loop) |
@@ -79,13 +79,13 @@ If you prefer not to use Make:
 
 ```bash
 # Build
-go build -o chainsaw ./cmd/chainsaw
+go build -o motorsaw ./cmd/motorsaw
 
 # Install
-cp chainsaw ~/.local/bin/
+cp motorsaw ~/.local/bin/
 
 # Restart daemon
-systemctl --user restart chainsawd
+systemctl --user restart motorsawd
 ```
 
 ---
@@ -94,7 +94,7 @@ systemctl --user restart chainsawd
 
 ### System Overview
 
-Chainsaw is a **GraphRAG** (Graph-Retrieval Augmented Generation) system that combines:
+Motorsaw is a **GraphRAG** (Graph-Retrieval Augmented Generation) system that combines:
 - **Vector search** for semantic code discovery
 - **Knowledge graph** for relational code understanding
 - **Background indexing** via filesystem watcher
@@ -102,7 +102,7 @@ Chainsaw is a **GraphRAG** (Graph-Retrieval Augmented Generation) system that co
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Chainsaw Binary                      │
+│                    Motorsaw Binary                      │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
 │  │  CLI Mode    │  │ Daemon Mode  │  │  Init Mode   │  │
 │  │  (Read-Only) │  │ (Indexer)    │  │  (Setup)     │  │
@@ -129,19 +129,19 @@ Chainsaw is a **GraphRAG** (Graph-Retrieval Augmented Generation) system that co
 
 **Single codebase** provides three modes:
 
-1. **CLI Mode** (`chainsaw search`, `chainsaw graph query`, etc.)
+1. **CLI Mode** (`motorsaw search`, `motorsaw graph query`, etc.)
    - Read-only database access
    - Query execution and result formatting
    - YAML output for LLM consumption
    - Context-aware (CWD-based filtering)
 
-2. **Daemon Mode** (`chainsaw daemon start`)
+2. **Daemon Mode** (`motorsaw daemon start`)
    - Background filesystem watcher
    - Persistent work queue
    - Two-pass indexing (embeddings + graph)
    - Concurrent processing with configurable workers
 
-3. **Init Mode** (`chainsaw init`)
+3. **Init Mode** (`motorsaw init`)
    - Database schema creation
    - Initial configuration setup
 
@@ -174,9 +174,9 @@ Chunk → Ollama (Generation) → Parse Relations → Symbol Index → Cross-Chu
 ### Component Architecture
 
 ```
-chainsaw/
+motorsaw/
 ├── cmd/
-│   └── chainsaw/              # Main binary entry point
+│   └── motorsaw/              # Main binary entry point
 │       ├── main.go            # Command routing
 │       ├── daemon.go          # Daemon mode implementation
 │       ├── search.go          # Search command
@@ -227,7 +227,7 @@ chainsaw/
 │   ├── global-config.yaml     # Annotated global config
 │   ├── local-config.yaml      # Annotated local config
 │   ├── SKILLS.md              # Coding guidelines template
-│   └── chainsawd.service      # Systemd unit file
+│   └── motorsawd.service      # Systemd unit file
 │
 └── Makefile                   # Build automation
 ```
@@ -586,9 +586,9 @@ func mergeLocal(global, local *Config) (*Config, error) {
 
 ```bash
 # Database must be user-only (no group/other access)
-chmod 600 ~/.chainsaw/chainsaw.db
-chmod 600 ~/.chainsaw/chainsaw.db-wal
-chmod 600 ~/.chainsaw/chainsaw.db-shm
+chmod 600 ~/.motorsaw/motorsaw.db
+chmod 600 ~/.motorsaw/motorsaw.db-wal
+chmod 600 ~/.motorsaw/motorsaw.db-shm
 ```
 
 #### 5. Ollama Isolation
@@ -617,7 +617,7 @@ func (c *OllamaClient) HealthCheck() error {
 
 #### Global Configuration
 
-**Location**: `~/.chainsaw/config.yaml`
+**Location**: `~/.motorsaw/config.yaml`
 
 ```yaml
 version: "2.1"
@@ -701,8 +701,8 @@ The whitelist acts as an **exception** to the blacklist, allowing blacklisted fi
 ### Project Structure Navigation
 
 ```
-chainsaw/
-├── cmd/chainsaw/          # Start here for command routing
+motorsaw/
+├── cmd/motorsaw/          # Start here for command routing
 ├── pkg/db/                # Database operations
 ├── pkg/indexer/           # File processing logic
 ├── pkg/llm/               # LLM client implementations
@@ -714,11 +714,11 @@ chainsaw/
 
 #### Adding a New Command
 
-1. Add command case in `cmd/chainsaw/main.go`:
+1. Add command case in `cmd/motorsaw/main.go`:
 ```go
 case "mycommand":
     if len(os.Args) < 3 {
-        fmt.Println("Usage: chainsaw mycommand <arg>")
+        fmt.Println("Usage: motorsaw mycommand <arg>")
         os.Exit(1)
     }
     handleMyCommand(os.Args[2])
@@ -742,7 +742,7 @@ func handleMyCommand(arg string) {
 4. Test manually:
 ```bash
 make install
-chainsaw mycommand test
+motorsaw mycommand test
 ```
 
 #### Modifying Database Schema
@@ -790,9 +790,9 @@ func (db *SQLiteDB) InsertMyData(data string) error {
 
 5. Test with fresh database:
 ```bash
-rm ~/.chainsaw/chainsaw.db
+rm ~/.motorsaw/motorsaw.db
 make install
-chainsaw init
+motorsaw init
 ```
 
 #### Adding an LLM Provider
@@ -823,7 +823,7 @@ func (c *Client) ExtractRelations(text string) (string, error) {
 }
 ```
 
-3. Add provider detection in `cmd/chainsaw/main.go`:
+3. Add provider detection in `cmd/motorsaw/main.go`:
 ```go
 func createLLMClient(cfg *config.ProfileConfig) llm.Client {
     switch cfg.Provider {
@@ -876,7 +876,7 @@ func TestMyNewClause(t *testing.T) {
 
 ```bash
 # Open database
-sqlite3 ~/.chainsaw/chainsaw.db
+sqlite3 ~/.motorsaw/motorsaw.db
 
 # Show tables
 .tables
@@ -899,19 +899,19 @@ GROUP BY e.relation_type;
 
 ```bash
 # Stop daemon
-systemctl --user stop chainsawd
+systemctl --user stop motorsawd
 
 # Run in foreground with debug output
-./chainsaw daemon start -debug
+./motorsaw daemon start -debug
 
 # Or check logs
-journalctl --user -u chainsawd -f --since "5 minutes ago"
+journalctl --user -u motorsawd -f --since "5 minutes ago"
 
 # Check what files are being watched
-journalctl --user -u chainsawd | grep "watching"
+journalctl --user -u motorsawd | grep "watching"
 
 # Check indexing activity
-journalctl --user -u chainsawd | grep "indexed"
+journalctl --user -u motorsawd | grep "indexed"
 ```
 
 #### Profiling
@@ -1169,9 +1169,9 @@ jobs:
 
 1. **Fork and clone**:
 ```bash
-git clone https://github.com/yourusername/chainsaw.git
-cd chainsaw
-git remote add upstream https://github.com/wouteroostervld/chainsaw.git
+git clone https://github.com/yourusername/motorsaw.git
+cd motorsaw
+git remote add upstream https://github.com/wouteroostervld/motorsaw.git
 ```
 
 2. **Create a branch**:
@@ -1183,7 +1183,7 @@ git checkout -b feature/my-feature
 ```bash
 # Write code...
 go test ./...
-go build -o chainsaw ./cmd/chainsaw
+go build -o motorsaw ./cmd/motorsaw
 ```
 
 4. **Commit with descriptive messages**:

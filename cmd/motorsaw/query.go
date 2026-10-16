@@ -7,12 +7,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/wouteroostervld/chainsaw/pkg/config"
-	"github.com/wouteroostervld/chainsaw/pkg/cypher"
-	"github.com/wouteroostervld/chainsaw/pkg/view"
+	"github.com/wouteroostervld/motorsaw/pkg/config"
+	"github.com/wouteroostervld/motorsaw/pkg/cypher"
+	"github.com/wouteroostervld/motorsaw/pkg/view"
 )
 
-const queryUsage = `Usage: chainsaw query [options] <cypher>
+const queryUsage = `Usage: motorsaw query [options] <cypher>
 
 Queries the code graph: definitions and how they relate. Results are limited
 to paths that touch the current directory unless --all is given.

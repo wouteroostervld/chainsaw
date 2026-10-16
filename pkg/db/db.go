@@ -15,7 +15,7 @@ import (
 )
 
 // driverName is the SQLite driver with the functions queries rely on
-const driverName = "sqlite3_chainsaw"
+const driverName = "sqlite3_motorsaw"
 
 var registerDriver sync.Once
 
@@ -56,7 +56,7 @@ type Config struct {
 
 // DefaultPath returns where the index lives for the current user
 func DefaultPath() string {
-	return filepath.Join(os.Getenv("HOME"), ".chainsaw", "graph.db")
+	return filepath.Join(os.Getenv("HOME"), ".motorsaw", "graph.db")
 }
 
 // Open opens or creates a database with the given configuration

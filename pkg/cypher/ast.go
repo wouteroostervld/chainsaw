@@ -1,5 +1,5 @@
 // Package cypher implements the subset of the Cypher query language that
-// chainsaw uses to query its code graph, and translates it to SQL.
+// motorsaw uses to query its code graph, and translates it to SQL.
 //
 //	MATCH (f:FUNCTION)-[:calls]->(t)
 //	WHERE t.name = "Open" AND f.file CONTAINS "/indexer/"

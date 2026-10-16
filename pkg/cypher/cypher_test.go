@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wouteroostervld/chainsaw/pkg/db"
+	"github.com/wouteroostervld/motorsaw/pkg/db"
 )
 
 // projDir is where the files of the test graph are; results show it as /proj

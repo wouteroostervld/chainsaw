@@ -3,7 +3,7 @@ package indexer
 import (
 	"context"
 
-	"github.com/wouteroostervld/chainsaw/pkg/db"
+	"github.com/wouteroostervld/motorsaw/pkg/db"
 )
 
 // MockDatabase is a simple mock for testing. It records what the indexer and

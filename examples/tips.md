@@ -1,6 +1,6 @@
 # Project Skills and Guidelines
 
-This file contains project-specific guidelines that Chainsaw will inject into context when providing code suggestions. It helps maintain consistency across the codebase.
+This file contains project-specific guidelines that Motorsaw will inject into context when providing code suggestions. It helps maintain consistency across the codebase.
 
 ## Coding Standards
 

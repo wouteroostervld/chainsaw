@@ -4,8 +4,8 @@
 
 ### One-time Setup
 ```bash
-git clone https://github.com/wouteroostervld/chainsaw.git
-cd chainsaw
+git clone https://github.com/wouteroostervld/motorsaw.git
+cd motorsaw
 make daemon-install  # Builds, installs, and starts daemon
 ```
 
@@ -30,7 +30,7 @@ make test
 |------|-------------|
 | `make install` | Build and install to ~/.local/bin |
 | `make update` | Alias for install (update existing) |
-| `make build` | Build locally (creates ./chainsaw) |
+| `make build` | Build locally (creates ./motorsaw) |
 | `make daemon-install` | Install daemon systemd service |
 | `make daemon-restart` | Restart daemon with new binary |
 | `make dev` | Build + restart daemon (quick dev loop) |
@@ -44,13 +44,13 @@ If you prefer not to use Make:
 
 ```bash
 # Build
-go build -o chainsaw ./cmd/chainsaw
+go build -o motorsaw ./cmd/motorsaw
 
 # Install
-cp chainsaw ~/.local/bin/
+cp motorsaw ~/.local/bin/
 
 # Restart daemon
-systemctl --user restart chainsawd
+systemctl --user restart motorsawd
 ```
 
 ### Testing
@@ -70,24 +70,24 @@ go test -v ./pkg/indexer
 
 ```bash
 # Check daemon status
-systemctl --user status chainsawd
+systemctl --user status motorsawd
 
 # View daemon logs
-journalctl --user -u chainsawd -f
+journalctl --user -u motorsawd -f
 
 # Database location
-~/.chainsaw/chainsaw.db
+~/.motorsaw/motorsaw.db
 
 # Inspect database
-sqlite3 ~/.chainsaw/chainsaw.db
+sqlite3 ~/.motorsaw/motorsaw.db
 ```
 
 ## Project Structure
 
 ```
-chainsaw/
+motorsaw/
 ├── cmd/
-│   └── chainsaw/          # Main binary
+│   └── motorsaw/          # Main binary
 ├── pkg/
 │   ├── config/            # Configuration loading
 │   ├── cypher/            # Cypher query transpiler
@@ -105,9 +105,9 @@ chainsaw/
 
 ### Adding a New Command
 
-1. Add handler in `cmd/chainsaw/main.go`
+1. Add handler in `cmd/motorsaw/main.go`
 2. Update command list in usage message
-3. Add tests in `cmd/chainsaw/main_test.go`
+3. Add tests in `cmd/motorsaw/main_test.go`
 4. Document in README
 
 ### Modifying Database Schema
@@ -122,5 +122,5 @@ chainsaw/
 
 1. Create client in `pkg/llm/<provider>/client.go`
 2. Implement `GraphExtractor` and `EmbeddingProvider` interfaces
-3. Add provider detection in `cmd/chainsaw/main.go`
+3. Add provider detection in `cmd/motorsaw/main.go`
 4. Document in configuration examples

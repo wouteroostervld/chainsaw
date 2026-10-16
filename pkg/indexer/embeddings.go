@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/wouteroostervld/chainsaw/pkg/chunker"
-	"github.com/wouteroostervld/chainsaw/pkg/config"
-	"github.com/wouteroostervld/chainsaw/pkg/db"
-	"github.com/wouteroostervld/chainsaw/pkg/embed"
+	"github.com/wouteroostervld/motorsaw/pkg/chunker"
+	"github.com/wouteroostervld/motorsaw/pkg/config"
+	"github.com/wouteroostervld/motorsaw/pkg/db"
+	"github.com/wouteroostervld/motorsaw/pkg/embed"
 )
 
 // EmbeddingStore is where the embeddings module keeps what it derives from a

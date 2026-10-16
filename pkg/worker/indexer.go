@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/wouteroostervld/chainsaw/pkg/db"
-	"github.com/wouteroostervld/chainsaw/pkg/indexer"
+	"github.com/wouteroostervld/motorsaw/pkg/db"
+	"github.com/wouteroostervld/motorsaw/pkg/indexer"
 )
 
 // Config holds worker configuration

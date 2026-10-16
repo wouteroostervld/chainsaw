@@ -1,4 +1,4 @@
-# Chainsaw Local Project Configuration
+# Motorsaw Local Project Configuration
 # Location: .config.yaml (in project root or subdirectories)
 #
 # This file allows per-project customization of indexing behavior.
@@ -33,8 +33,8 @@ blacklist:
 # For Both: Switch kinds of index on or off for the files below this
 # directory. A kind that is not named keeps the setting of your profile.
 index:
-  embeddings: true      # Search by meaning here ("chainsaw search"); needs a
-                        # model in ~/.chainsaw/config.yaml
+  embeddings: true      # Search by meaning here ("motorsaw search"); needs a
+                        # model in ~/.motorsaw/config.yaml
   # graph: false        # Keep no code graph of this project
 
 # ❌ CANNOT OVERRIDE:

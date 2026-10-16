@@ -7,15 +7,15 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/wouteroostervld/chainsaw/pkg/config"
-	"github.com/wouteroostervld/chainsaw/pkg/db"
-	"github.com/wouteroostervld/chainsaw/pkg/embed"
-	"github.com/wouteroostervld/chainsaw/pkg/indexer"
+	"github.com/wouteroostervld/motorsaw/pkg/config"
+	"github.com/wouteroostervld/motorsaw/pkg/db"
+	"github.com/wouteroostervld/motorsaw/pkg/embed"
+	"github.com/wouteroostervld/motorsaw/pkg/indexer"
 )
 
 const version = "0.3.0"
 
-const usage = `Usage: chainsaw <command>
+const usage = `Usage: motorsaw <command>
 
 Looking at code:
   grep <pattern> [path...]   Search with a regular expression; shows the definition around each match
@@ -28,6 +28,7 @@ Keeping the index:
   index <path>               Index the source files under a path
   status                     Show what is in the index, and which kinds of index are on here
   daemon start               Watch for changes and keep the index current
+  migrate                    Move an installation made as chainsaw over to motorsaw
 
 Run a command with --help for its options.`
 
@@ -35,6 +36,12 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Println(usage)
 		os.Exit(1)
+	}
+
+	switch os.Args[1] {
+	case "migrate", "version", "help", "-h", "--help":
+	default:
+		legacyNote()
 	}
 
 	switch os.Args[1] {
@@ -61,8 +68,10 @@ func main() {
 		handleStatus()
 	case "daemon":
 		handleDaemon()
+	case "migrate":
+		handleMigrate(os.Args[2:])
 	case "version":
-		fmt.Printf("chainsaw version %s\n", version)
+		fmt.Printf("motorsaw version %s\n", version)
 	case "help", "-h", "--help":
 		fmt.Println(usage)
 	default:
@@ -101,7 +110,7 @@ func workingDir() string {
 
 // configPath is where the user's configuration is
 func configPath() string {
-	return filepath.Join(os.Getenv("HOME"), ".chainsaw", "config.yaml")
+	return filepath.Join(os.Getenv("HOME"), ".motorsaw", "config.yaml")
 }
 
 // loadProfile returns the active profile of the user's configuration, or
@@ -200,7 +209,7 @@ func (s *settings) indexer(database *db.DB, only ...string) (*indexer.Indexer, e
 // embeddingsHelp says how to switch the embeddings index on
 const embeddingsHelp = `The embeddings index is off by default: it asks a model for a vector for
 every chunk of code, which is slow and may cost money. To switch it on, say
-which model to use in ~/.chainsaw/config.yaml:
+which model to use in ~/.motorsaw/config.yaml:
 
   profiles:
     default:

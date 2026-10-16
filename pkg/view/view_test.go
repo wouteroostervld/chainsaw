@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wouteroostervld/chainsaw/pkg/db"
+	"github.com/wouteroostervld/motorsaw/pkg/db"
 )
 
 const source = `import lib

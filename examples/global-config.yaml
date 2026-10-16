@@ -1,7 +1,7 @@
-# Chainsaw Global Configuration
-# Location: ~/.chainsaw/config.yaml
+# Motorsaw Global Configuration
+# Location: ~/.motorsaw/config.yaml
 #
-# All of this is optional: without a configuration file chainsaw keeps the
+# All of this is optional: without a configuration file motorsaw keeps the
 # code graph and skips node_modules, vendor and __pycache__.
 
 version: "3"
@@ -34,8 +34,8 @@ profiles:
     # The kinds of index to keep. Each works alone; a kind left out keeps
     # its default. A project can switch them for itself in a .config.yaml.
     index:
-      graph: true        # definitions, calls, imports: for "chainsaw query"
-      embeddings: false  # a vector per chunk of code: for "chainsaw search"
+      graph: true        # definitions, calls, imports: for "motorsaw query"
+      embeddings: false  # a vector per chunk of code: for "motorsaw search"
 
     # Where the references of a project may lead outside it. By default
     # nowhere: a call is matched with the definitions of its own project

@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/wouteroostervld/chainsaw/pkg/config"
+	"github.com/wouteroostervld/motorsaw/pkg/config"
 )
 
 // tree creates the named files, empty, below a new directory

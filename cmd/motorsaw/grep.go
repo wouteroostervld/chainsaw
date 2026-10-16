@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/wouteroostervld/chainsaw/pkg/config"
-	"github.com/wouteroostervld/chainsaw/pkg/grep"
-	"github.com/wouteroostervld/chainsaw/pkg/view"
+	"github.com/wouteroostervld/motorsaw/pkg/config"
+	"github.com/wouteroostervld/motorsaw/pkg/grep"
+	"github.com/wouteroostervld/motorsaw/pkg/view"
 )
 
-const grepUsage = `Usage: chainsaw grep [options] <pattern> [path...]
+const grepUsage = `Usage: motorsaw grep [options] <pattern> [path...]
 
 Searches files with a Perl-compatible regular expression and shows, for each
 matching line, the definition it is in: the qualified name of the function,
@@ -42,13 +42,13 @@ Options may stand before or after the pattern and the paths. Put -- before a
 pattern that begins with a dash.
 
 Examples:
-  chainsaw grep 'IS_EXT2_SB' fs/ext4
-  chainsaw grep -s 'ctx\.Done\(\)'
-  chainsaw grep -s --limit 40 'err' pkg
-  chainsaw grep --expand body '(?<=func )handle\w+'
-  chainsaw grep --signature 'context\.Context'
+  motorsaw grep 'IS_EXT2_SB' fs/ext4
+  motorsaw grep -s 'ctx\.Done\(\)'
+  motorsaw grep -s --limit 40 'err' pkg
+  motorsaw grep --expand body '(?<=func )handle\w+'
+  motorsaw grep --signature 'context\.Context'
 
-To match on the syntax tree and not on the text, see chainsaw match.`
+To match on the syntax tree and not on the text, see motorsaw match.`
 
 // shape is how a command that searches files shows what it found
 type shape struct {

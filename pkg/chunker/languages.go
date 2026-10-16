@@ -20,8 +20,8 @@ import (
 	tree_sitter_rust "github.com/tree-sitter/tree-sitter-rust/bindings/go"
 	tree_sitter_typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 
-	tree_sitter_bcpl "github.com/wouteroostervld/chainsaw/pkg/chunker/bcpl"
-	tree_sitter_m68k "github.com/wouteroostervld/chainsaw/pkg/chunker/m68k"
+	tree_sitter_bcpl "github.com/wouteroostervld/motorsaw/pkg/chunker/bcpl"
+	tree_sitter_m68k "github.com/wouteroostervld/motorsaw/pkg/chunker/m68k"
 )
 
 type set map[string]bool

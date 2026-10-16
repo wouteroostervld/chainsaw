@@ -14,13 +14,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wouteroostervld/chainsaw/pkg/chunker"
-	"github.com/wouteroostervld/chainsaw/pkg/config"
-	"github.com/wouteroostervld/chainsaw/pkg/db"
-	"github.com/wouteroostervld/chainsaw/pkg/filter"
-	"github.com/wouteroostervld/chainsaw/pkg/indexer"
-	"github.com/wouteroostervld/chainsaw/pkg/watcher"
-	"github.com/wouteroostervld/chainsaw/pkg/worker"
+	"github.com/wouteroostervld/motorsaw/pkg/chunker"
+	"github.com/wouteroostervld/motorsaw/pkg/config"
+	"github.com/wouteroostervld/motorsaw/pkg/db"
+	"github.com/wouteroostervld/motorsaw/pkg/filter"
+	"github.com/wouteroostervld/motorsaw/pkg/indexer"
+	"github.com/wouteroostervld/motorsaw/pkg/watcher"
+	"github.com/wouteroostervld/motorsaw/pkg/worker"
 )
 
 func handleDaemon() {
@@ -46,12 +46,12 @@ func handleDaemon() {
 }
 
 func printDaemonUsage() {
-	fmt.Println("chainsaw daemon - Background indexing daemon")
+	fmt.Println("motorsaw daemon - Background indexing daemon")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  chainsaw daemon start [-debug] [-loglevel level] [-scan=false] [-scan-kinds kinds]")
+	fmt.Println("  motorsaw daemon start [-debug] [-loglevel level] [-scan=false] [-scan-kinds kinds]")
 	fmt.Println("                        Start the daemon")
-	fmt.Println("  chainsaw daemon status")
+	fmt.Println("  motorsaw daemon status")
 	fmt.Println("                        Show daemon status")
 	fmt.Println()
 	fmt.Println("Flags for 'start' command:")
@@ -99,7 +99,7 @@ func handleDaemonStart() {
 	}
 	defer database.Close()
 
-	configPath := filepath.Join(os.Getenv("HOME"), ".chainsaw", "config.yaml")
+	configPath := filepath.Join(os.Getenv("HOME"), ".motorsaw", "config.yaml")
 	fs := &config.RealFileSystem{}
 	globalCfg, err := config.LoadGlobalConfigFromPath(configPath, fs)
 	if err != nil {
@@ -332,7 +332,7 @@ func handleDaemonStart() {
 }
 
 // startupScan brings the index up to date with the included directories, as
-// "chainsaw index" would: new and modified files are indexed and the index
+// "motorsaw index" would: new and modified files are indexed and the index
 // forgets files that are gone. It works beside the watcher and stops between
 // two files when the daemon does.
 func startupScan(ctx context.Context, database *db.DB, st *settings, roots []string, kinds []string) {

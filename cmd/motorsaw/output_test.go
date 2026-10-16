@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wouteroostervld/chainsaw/pkg/chunker"
-	"github.com/wouteroostervld/chainsaw/pkg/grep"
+	"github.com/wouteroostervld/motorsaw/pkg/chunker"
+	"github.com/wouteroostervld/motorsaw/pkg/grep"
 )
 
 func TestParse_OptionsAnywhere(t *testing.T) {

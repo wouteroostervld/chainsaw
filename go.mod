@@ -1,4 +1,4 @@
-module github.com/wouteroostervld/chainsaw
+module github.com/wouteroostervld/motorsaw
 
 go 1.24.7
 

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wouteroostervld/chainsaw/pkg/config"
+	"github.com/wouteroostervld/motorsaw/pkg/config"
 )
 
 func TestIndexFile(t *testing.T) {

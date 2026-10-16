@@ -1,6 +1,6 @@
 package config
 
-// GlobalConfig represents the main configuration file at ~/.chainsaw/config.yaml
+// GlobalConfig represents the main configuration file at ~/.motorsaw/config.yaml
 type GlobalConfig struct {
 	Version       string              `yaml:"version"`
 	ActiveProfile string              `yaml:"active_profile"`

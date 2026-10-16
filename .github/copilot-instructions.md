@@ -1,11 +1,11 @@
-# Chainsaw - GraphRAG CLI & Daemon
+# Motorsaw - GraphRAG CLI & Daemon
 
 ## Project Overview
 
-Chainsaw is a high-performance, local-first GraphRAG system written in Go. It consists of two binaries from a single codebase:
+Motorsaw is a high-performance, local-first GraphRAG system written in Go. It consists of two binaries from a single codebase:
 
-- **`chainsawd`**: Background daemon that watches filesystem events, indexes files, and generates vector embeddings + knowledge graphs via Ollama
-- **`chainsaw`**: Read-only CLI for searching, querying, and injecting context into files
+- **`motorsawd`**: Background daemon that watches filesystem events, indexes files, and generates vector embeddings + knowledge graphs via Ollama
+- **`motorsaw`**: Read-only CLI for searching, querying, and injecting context into files
 
 **Core Philosophy**: Unix-compliant, security-first, zero-latency search, model-agnostic
 
@@ -13,12 +13,12 @@ Chainsaw is a high-performance, local-first GraphRAG system written in Go. It co
 
 ```bash
 # Initialize module (first time setup)
-go mod init github.com/wouteroostervld/chainsaw
+go mod init github.com/wouteroostervld/motorsaw
 go mod tidy
 
 # Build both binaries
-go build -o chainsawd ./cmd/chainsawd
-go build -o chainsaw ./cmd/chainsaw
+go build -o motorsawd ./cmd/motorsawd
+go build -o motorsaw ./cmd/motorsaw
 
 # Install binaries to $GOPATH/bin
 go install ./cmd/...
@@ -51,7 +51,7 @@ This separation allows different models for different tasks (e.g., `nomic-embed-
 
 - **Engine**: SQLite with `sqlite-vec` extension
 - **Mode**: WAL (Write-Ahead Logging) for concurrent daemon writes + CLI reads
-- **Location**: `~/.chainsaw/chainsaw.db`
+- **Location**: `~/.motorsaw/motorsaw.db`
 - **Security**: File permissions must be `0600` (user R/W only)
 
 #### Schema Highlights
@@ -65,7 +65,7 @@ This separation allows different models for different tasks (e.g., `nomic-embed-
 
 #### Global Configuration
 
-- **Location**: `~/.chainsaw/config.yaml`
+- **Location**: `~/.motorsaw/config.yaml`
 - **Profiles**: Multiple profiles (e.g., `coding_heavy`, `notes_fast`) with different models/settings
 - **Active Profile**: Loaded by `active_profile` key
 
@@ -147,8 +147,8 @@ Two orthogonal filtering systems work together:
 
 ### Logging Strategy
 
-- **Daemon (`chainsawd`)**: Use `zerolog` for structured JSON logging
-- **CLI (`chainsaw`)**: Use `pterm` for human-readable output and progress bars
+- **Daemon (`motorsawd`)**: Use `zerolog` for structured JSON logging
+- **CLI (`motorsaw`)**: Use `pterm` for human-readable output and progress bars
 
 ### Filesystem Watching
 
@@ -160,25 +160,25 @@ Two orthogonal filtering systems work together:
 
 The CLI must auto-detect context:
 
-1. **Pipe Mode**: `echo "src/main.go" | chainsaw search "auth"`
-2. **Xargs Mode**: `find . -name "*.go" | xargs chainsaw search "auth"`
-3. **Interactive Mode**: `chainsaw search "auth"` (scans CWD based on whitelist)
+1. **Pipe Mode**: `echo "src/main.go" | motorsaw search "auth"`
+2. **Xargs Mode**: `find . -name "*.go" | xargs motorsaw search "auth"`
+3. **Interactive Mode**: `motorsaw search "auth"` (scans CWD based on whitelist)
 
 ### Context Injection Format
 
-When using `chainsaw search --inject`, prepend this non-destructive block:
+When using `motorsaw search --inject`, prepend this non-destructive block:
 
 ```go
-/* CHAINSAW_CONTEXT_START
+/* MOTORSAW_CONTEXT_START
    ID: <uuid>
    Query: "auth logic"
    Related: [session.go (0.89), user.go (0.82)]
    Derived Relations: [AuthService -> calls -> UserRepo]
    Skill: [Refactoring Guidelines]
-   CHAINSAW_CONTEXT_END */
+   MOTORSAW_CONTEXT_END */
 ```
 
-Use `chainsaw clean` to atomically strip these blocks.
+Use `motorsaw clean` to atomically strip these blocks.
 
 ### Chunking Strategy
 
@@ -197,10 +197,10 @@ Use `chainsaw clean` to atomically strip these blocks.
 ## Project Structure
 
 ```
-chainsaw/
+motorsaw/
 ├── cmd/
-│   ├── chainsawd/     # Daemon entry point
-│   └── chainsaw/      # CLI entry point
+│   ├── motorsawd/     # Daemon entry point
+│   └── motorsaw/      # CLI entry point
 ├── pkg/
 │   ├── config/        # Config loader with local override support
 │   │   ├── loader.go  # LoadGlobalConfig, FindLocalConfig, MergeConfigFor{Daemon,CLI}
@@ -219,7 +219,7 @@ chainsaw/
 
 ## Skills System
 
-- **Location**: `~/.chainsaw/skills/` or project root
+- **Location**: `~/.motorsaw/skills/` or project root
 - **File**: `SKILLS.md`
 - **Purpose**: Project-specific guidelines injected with context (e.g., refactoring rules, coding standards)
 
@@ -227,7 +227,7 @@ chainsaw/
 
 ```bash
 # Install as systemd user service
-chainsaw daemon install
+motorsaw daemon install
 
 # Graceful shutdown
 # Must handle SIGTERM: close DB WAL, flush queues

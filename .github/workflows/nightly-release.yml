@@ -66,20 +66,20 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           # Build both binaries
-          go build -ldflags="-s -w" -o chainsaw-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/chainsaw
+          go build -ldflags="-s -w" -o motorsaw-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} ./cmd/motorsaw
 
       - name: Compress binaries
         run: |
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip chainsaw-${{ matrix.goos }}-${{ matrix.goarch }}.zip chainsaw-${{ matrix.goos }}-${{ matrix.goarch }}.exe
+            zip motorsaw-${{ matrix.goos }}-${{ matrix.goarch }}.zip motorsaw-${{ matrix.goos }}-${{ matrix.goarch }}.exe
           else
-            gzip -c chainsaw-${{ matrix.goos }}-${{ matrix.goarch }} > chainsaw-${{ matrix.goos }}-${{ matrix.goarch }}.gz
+            gzip -c motorsaw-${{ matrix.goos }}-${{ matrix.goarch }} > motorsaw-${{ matrix.goos }}-${{ matrix.goarch }}.gz
           fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: chainsaw-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: motorsaw-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             *.gz
             *.zip
@@ -124,7 +124,7 @@ jobs:
           prerelease: ${{ steps.release_name.outputs.prerelease }}
           files: artifacts/**/*
           body: |
-            ## Chainsaw Build - ${{ steps.release_name.outputs.name }}
+            ## Motorsaw Build - ${{ steps.release_name.outputs.name }}
             
             Automated build containing compressed binaries for multiple platforms.
             
@@ -135,8 +135,8 @@ jobs:
             
             ### Installation
             1. Download the `.gz` files for your platform (or `.zip` for Windows)
-            2. Extract: `gunzip chainsaw*.gz` (or `unzip` for Windows)
-            3. Make executable: `chmod +x chainsaw chainsawd` (Unix-like systems)
-            4. Move to PATH: `mv chainsaw chainsawd /usr/local/bin/` (or add to your PATH)
+            2. Extract: `gunzip motorsaw*.gz` (or `unzip` for Windows)
+            3. Make executable: `chmod +x motorsaw motorsawd` (Unix-like systems)
+            4. Move to PATH: `mv motorsaw motorsawd /usr/local/bin/` (or add to your PATH)
             
             Built from commit: ${{ github.sha }}
