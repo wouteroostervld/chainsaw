@@ -145,13 +145,13 @@ upper case. Square brackets are parentheses, as in the TRIPOS compiler
 ## Seen in use
 
 Claude Code, reading the 3,200 lines of the 1985 Tripos BCPL code generator
-to reverse engineer the Amiga Kickstart ROM, on hearing that Chainsaw parses
+to reverse engineer the Amiga Kickstart ROM, on hearing that Motorsaw parses
 BCPL:
 
-![Claude Code session: after "/chainsaw works for BCPL!", Claude uses it on
+![Claude Code session: after "/motorsaw works for BCPL!", Claude uses it on
 the code generator source and reports that it handles the 1985 syntax, down
 to nested routines, which makes the source easy to
-navigate](docs/chainsaw-bcpl.png)
+navigate](docs/motorsaw-bcpl.png)
 
 Where that session ended: the code generator running unmodified, and a
 routine of AmigaDOS compiled to the same 140 bytes as the ROM.
